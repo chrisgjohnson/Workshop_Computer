@@ -70,6 +70,7 @@ static void seq_append( Casl* self, To* t )
 }
 
 static void parse_table( Casl* self, lua_State* L );
+static To* to_alloc( Casl* self );
 void casl_describe( int index, lua_State* L )
 {
     if(index < 0 || index >= SELVES_COUNT){
@@ -89,8 +90,45 @@ void casl_describe( int index, lua_State* L )
     // enter first sequence
     seq_enter(self);
 
-    parse_table(self, L);
+    // Check if table is empty before parsing
+    if (lua_rawlen(L, -1) > 0) {
+        parse_table(self, L);
+    }
     // seq_exit(self)? // i think we want to start inside the first Seq anyway
+}
+
+void casl_describe_to_literal_q16( int index, q16_t volts_q16, q16_t seconds_q16, Shape_t shape )
+{
+    if(index < 0 || index >= SELVES_COUNT){
+        printf("casl_describe_to_literal_q16: invalid index %d (valid 0..%d)\n", index, SELVES_COUNT-1);
+        return;
+    }
+    Casl* self = _selves[index];
+
+    // deallocate everything (match casl_describe behavior, but without Lua parsing)
+    self->to_ix  = 0;
+    self->seq_ix = 0;
+    self->seq_select = -1;
+    self->seq_current = &self->seqs[0];
+    for(int i=0; i<SEQ_COUNT; i++){ self->seqs[i].pc = 0; }
+
+    // enter first sequence
+    seq_enter(self);
+
+    To* t = to_alloc(self);
+    if(t == NULL){
+        printf("ERROR: not enough To slots left (fast describe)\n");
+        return;
+    }
+    t->ctrl = ToLiteral;
+    t->a.type = ElemT_Fixed;
+    t->a.obj.q = volts_q16;
+    t->b.type = ElemT_Fixed;
+    t->b.obj.q = seconds_q16;
+    t->c.type = ElemT_Shape;
+    t->c.obj.shape = shape;
+
+    seq_append(self, t);
 }
 
 // suite of functions for unwrapping elements of Lua tables
@@ -230,13 +268,15 @@ static void capture_elem( Casl* self, Elem* e, lua_State* L, int ix )
 {
     switch( ix_type(L, ix) ){ // type of table elem
         case LUA_TNUMBER:{
-            e->obj.f = ix_num(L, ix);
-            e->type = ElemT_Float;
+            float f = ix_num(L, ix);
+            e->obj.q = FLOAT_TO_Q16(f);  // Convert float to Q16 at Lua boundary
+            e->type = ElemT_Fixed;
             break;}
 
         case LUA_TBOOLEAN:{
-            e->obj.f = ix_bool(L, ix);
-            e->type = ElemT_Float;
+            float f = ix_bool(L, ix);
+            e->obj.q = FLOAT_TO_Q16(f);  // Convert bool (as float) to Q16
+            e->type = ElemT_Fixed;
             break;}
 
         case LUA_TSTRING:{
@@ -362,19 +402,39 @@ static void next_action( int index )
         if(t){ // To is valid
             switch(t->ctrl){
                 case ToLiteral:{
-                    float volts = resolve(self, &t->a).f;
-                    float ms = resolve(self, &t->b).f * 1000.0;
-                    S_toward( index
-                            , volts
-                            , ms
-                            , resolve(self, &t->c).shape
-                            , (ms > 0.0) ? &next_action : NULL // callback only if there's a time delay
-                            );
-                    if(ms > 0.0){ return; } // wait for DSP callback before proceeding
+                    q16_t volts_q16 = resolve(self, &t->a).q;     // Q16.16 volts
+                    q16_t seconds_q16 = resolve(self, &t->b).q;   // Q16.16 seconds
+                    // Convert seconds to milliseconds: seconds * 1000
+                    q16_t ms_q16 = Q16_MUL(seconds_q16, FLOAT_TO_Q16(1000.0));
+
+                    // Coalesce only the simplest possible ASL: a single-stage `to(...)`.
+                    // This is what `output[n].volts = x` generates, and it is safe to treat
+                    // rapid updates as “last value wins” to avoid queue backlog.
+                    bool coalescable = false;
+                    if (self->seq_ix == 1 && self->seqs[0].length == 1 && self->seqs[0].stage[0] == t) {
+                        coalescable = true;
+                    }
+                    
+                    if (coalescable) {
+                        S_toward_q16_coalescable( index
+                                                , volts_q16
+                                                , ms_q16
+                                                , resolve(self, &t->c).shape
+                                                , (ms_q16 > 0) ? &next_action : NULL
+                                                );
+                    } else {
+                        S_toward_q16( index
+                                    , volts_q16
+                                    , ms_q16
+                                    , resolve(self, &t->c).shape
+                                    , (ms_q16 > 0) ? &next_action : NULL
+                                    );
+                    }
+                    if(ms_q16 > 0){ return; } // wait for DSP callback before proceeding
                     break;}
 
                 case ToIf:{
-                    if( resolve(self, &t->a).f <= 0.0 ){ // pred is false
+                    if( resolve(self, &t->a).q <= 0 ){ // Q16 comparison (0 is still 0 in Q16)
                         goto stepup; // WARNING! ensuring only 1 path to asl_done event
                     }
                     break;}
@@ -423,7 +483,7 @@ static bool find_control( Casl* self, ToControl ctrl, bool full_search )
 
 // resolves behavioural types to a literal value
 static volatile uint16_t resolving_mutable; // tmp global var for cheaper recursive fn
-#define RESOLVE_VAR(self, e, n) _resolve(self, &self->dynamics[e->obj.var[n]] ).f
+#define RESOLVE_VAR_Q16(self, e, n) _resolve(self, &self->dynamics[e->obj.var[n]] ).q
 static ElemO _resolve( Casl* self, Elem* e )
 {
     switch( e->type ){
@@ -431,20 +491,24 @@ static ElemO _resolve( Casl* self, Elem* e )
         case ElemT_Mutable:{
             resolving_mutable = e->obj.var[0];
             return _resolve(self, &self->dynamics[e->obj.var[0]] );}
-        case ElemT_Negate: return (ElemO){-RESOLVE_VAR(self,e,0)};
-        case ElemT_Add: return (ElemO){RESOLVE_VAR(self,e,0) + RESOLVE_VAR(self,e,1)};
-        case ElemT_Sub: return (ElemO){RESOLVE_VAR(self,e,0) - RESOLVE_VAR(self,e,1)};
-        case ElemT_Mul: return (ElemO){RESOLVE_VAR(self,e,0) * RESOLVE_VAR(self,e,1)};
-        case ElemT_Div: return (ElemO){RESOLVE_VAR(self,e,0) / RESOLVE_VAR(self,e,1)};
+        case ElemT_Negate: return (ElemO){.q = -RESOLVE_VAR_Q16(self,e,0)};
+        case ElemT_Add: return (ElemO){.q = RESOLVE_VAR_Q16(self,e,0) + RESOLVE_VAR_Q16(self,e,1)};
+        case ElemT_Sub: return (ElemO){.q = RESOLVE_VAR_Q16(self,e,0) - RESOLVE_VAR_Q16(self,e,1)};
+        case ElemT_Mul: return (ElemO){.q = Q16_MUL_SMALL(RESOLVE_VAR_Q16(self,e,0), RESOLVE_VAR_Q16(self,e,1))};
+        case ElemT_Div: return (ElemO){.q = Q16_DIV(RESOLVE_VAR_Q16(self,e,0), RESOLVE_VAR_Q16(self,e,1))};
         case ElemT_Mod:{
-            // this is just fmodf(val, wrap), but we need to handle negative numerators
-            // FIXME negative values shoud wrap to 'wrap' value
-            float val  = RESOLVE_VAR(self,e,0); // -0.001
-            float wrap = RESOLVE_VAR(self,e,1); // 0.1
-            float mul = floorf(val/wrap); // -0.01 -> -1
-            return (ElemO){val - (wrap * mul)};} // -0.001 - (0.1 * -1) => 0.099
+            // Q16.16 modulo operation
+            q16_t val_q16  = RESOLVE_VAR_Q16(self,e,0);
+            q16_t wrap_q16 = RESOLVE_VAR_Q16(self,e,1);
+            // Division: val / wrap, result in Q16
+            q16_t div_result = Q16_DIV(val_q16, wrap_q16);
+            // Floor: extract integer part by shifting down and back up
+            q16_t floored = (div_result >> Q16_SHIFT) << Q16_SHIFT;
+            // Multiply: floor * wrap
+            q16_t mul_result = Q16_MUL_SMALL(wrap_q16, floored);
+            return (ElemO){.q = val_q16 - mul_result};}
         case ElemT_Mutate:{
-            ElemO mutated = (ElemO){RESOLVE_VAR(self,e,0)};
+            ElemO mutated = (ElemO){.q = RESOLVE_VAR_Q16(self,e,0)};
             if(resolving_mutable < DYN_COUNT){
                 self->dynamics[resolving_mutable].obj = mutated; // update value
                 resolving_mutable = DYN_COUNT; // mutation resolved!
@@ -453,7 +517,7 @@ static ElemO _resolve( Casl* self, Elem* e )
         default: return e->obj;
     }
 }
-#undef RESOLVE_VAR
+#undef RESOLVE_VAR_Q16
 
 // wrap _resolve with mutable resolution
 static ElemO resolve( Casl* self, Elem* e )
@@ -499,8 +563,8 @@ void casl_setdynamic( int index, int dynamic_ix, float val )
     if(index < 0 || index >= SELVES_COUNT){ return; }
     Casl* self = _selves[index];
 
-    self->dynamics[dynamic_ix].obj.f = val;
-    self->dynamics[dynamic_ix].type  = ElemT_Float; // FIXME support other types
+    self->dynamics[dynamic_ix].obj.q = FLOAT_TO_Q16(val);  // Convert float to Q16
+    self->dynamics[dynamic_ix].type  = ElemT_Fixed;
 }
 
 float casl_getdynamic( int index, int dynamic_ix )
@@ -509,8 +573,8 @@ float casl_getdynamic( int index, int dynamic_ix )
     Casl* self = _selves[index];
 
     switch(self->dynamics[dynamic_ix].type){
-        case ElemT_Float:
-            return self->dynamics[dynamic_ix].obj.f;
+        case ElemT_Fixed:
+            return Q16_TO_FLOAT(self->dynamics[dynamic_ix].obj.q);  // Convert Q16 to float
         default:
             printf("getdynamic! wrong type\n");
             return 0.0;

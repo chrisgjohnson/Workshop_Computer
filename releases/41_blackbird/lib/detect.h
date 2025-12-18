@@ -26,6 +26,9 @@ typedef void (*Detect_callback_t)(int channel, float value);
 typedef struct{
     int blocks;
     int countdown;
+    uint64_t last_sample_counter; // Tracks ISR sample index consumed on Core 0
+    uint32_t interval_samples;     // Sample-accurate interval (>=1 sample)
+    uint32_t sample_countdown;     // Countdown in samples (ISR-side)
 } D_stream_t;
 
 typedef struct{

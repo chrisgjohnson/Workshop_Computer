@@ -19,18 +19,25 @@ void clock_update(uint32_t time_now);
 bool clock_schedule_resume_sleep( int coro_id, float seconds );
 bool clock_schedule_resume_sync( int coro_id, float beats );
 bool clock_schedule_resume_beatsync( int coro_id, float beats );
-void clock_update_reference( double beats, double beat_duration );
-void clock_update_reference_from( double beats, double beat_duration, clock_source_t source);
+void clock_update_reference( float beats, float beat_duration );
+void clock_update_reference_from( float beats, float beat_duration, clock_source_t source);
 void clock_start_from( clock_source_t source );
 void clock_stop_from( clock_source_t source );
 void clock_set_source( clock_source_t source );
 
 float clock_get_time_beats(void);
-double clock_get_time_seconds(void);
+float clock_get_time_seconds(void);
 float clock_get_tempo(void);
 
 void clock_cancel_coro( int coro_id );
 void clock_cancel_coro_all( void );
+
+// Stats
+uint32_t clock_get_schedule_failures(void);
+uint32_t clock_get_schedule_successes(void);
+uint32_t clock_get_max_active_threads(void);
+uint32_t clock_get_pool_capacity(void);
+void clock_reset_stats(void);
 
 // Sample-based timing functions for improved precision
 void clock_set_sample_counter(uint64_t samples);

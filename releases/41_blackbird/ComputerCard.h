@@ -1,4 +1,8 @@
 /*
+
+DUNE AND LLMs HAVE FUXED WITH THIS VERSION OF COMPUTERCARD- it is BLACKBIRD SPECIFIC
+USE ELSEWHERE AT YOUR OWN RISK!
+
 ComputerCard  - by Chris Johnson
 
 version 0.2.7   -  2025/03/08
@@ -9,7 +13,7 @@ System Computer.
 
 It aims to present a very simple C++ interface for card programmers 
 to use the jacks, knobs, switch and LEDs, for programs running at
-a fixed 48kHz audio sample rate.
+a fixed PROCESS_SAMPLE_RATE_HZ audio sample rate (currently 9.6kHz).
 
 See examples/ directory
 */
@@ -20,6 +24,7 @@ See examples/ directory
 
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
+#include "lib/sample_rate.h"
 
 #define PULSE_1_RAW_OUT 8
 #define PULSE_2_RAW_OUT 9
@@ -35,6 +40,8 @@ class ComputerCard
 	constexpr static int numLeds = 6;
 	constexpr static uint8_t leds[numLeds] = { 10, 11, 12, 13, 14, 15 };
 public:
+	typedef void (*Core1BackgroundHook)(void);
+	static void RegisterCore1BackgroundHook(Core1BackgroundHook hook);
 
 	/// Knob index, used by KnobVal
 	enum Knob {Main, X, Y};
@@ -66,8 +73,9 @@ public:
 	static ComputerCard *ThisPtr() {return thisptr;}
 
 protected:
-	/// Callback, called once per sample at 48kHz
+	/// Callback, called once per sample at PROCESS_SAMPLE_RATE_HZ
 	virtual void ProcessSample() = 0;
+	static Core1BackgroundHook core1_background_hook;
 
 
 
@@ -489,6 +497,12 @@ volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
 
 
 ComputerCard *ComputerCard::thisptr;
+ComputerCard::Core1BackgroundHook ComputerCard::core1_background_hook = nullptr;
+
+void ComputerCard::RegisterCore1BackgroundHook(Core1BackgroundHook hook)
+{
+	core1_background_hook = hook;
+}
 
 // Return pseudo-random bit for normalisation probe
 uint32_t __not_in_flash_func(ComputerCard::next_norm_probe)()
@@ -510,9 +524,10 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 
 
 	// ADC clock runs at 48MHz
-	// 48MHz ÷ (124+1) = 384kHz ADC sample rate
-	//                 = 8×48kHz audio sample rate
-	adc_set_clkdiv(124);
+	// 48MHz ÷ (clkdiv+1) = (PROCESS_SAMPLE_RATE_HZ_INT*8) ADC sample rate
+	//                     = 8× ProcessSample rate (2 sets of 4 inputs per ProcessSample)
+	const uint32_t adc_clkdiv = (48000000u / (PROCESS_SAMPLE_RATE_HZ_INT * 8u)) - 1u;
+	adc_set_clkdiv((float)adc_clkdiv);
 
 	// claim and setup DMAs for reading to ADC, and writing to SPI DAC
 	adc_dma = dma_claim_unused_channel(true);
@@ -588,6 +603,11 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 			break;
 		}
 		   
+
+		if (core1_background_hook)
+		{
+			core1_background_hook();
+		}
 
 	}
 }
@@ -689,13 +709,13 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 			np = (np<<1)+(normprobe&0x1);
 		}
 
-		// CV sampled at 24kHz comes in over two successive samples
+		// CV sampled at the ProcessSample rate (~9.6kHz) comes in over two successive samples
 		if (norm_probe_count == 14 || norm_probe_count == 15)
 		{
 			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][7]<1800);
 		}
 
-		// Audio and pulse measured every sample at 48kHz
+		// Audio and pulse measured every sample at the ProcessSample rate (~9.6kHz)
 		if (norm_probe_count == 15)
 		{
 			plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);
@@ -705,7 +725,16 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 
 			for (int i=0; i<6; i++)
 			{
-				connected[i] = (np != plug_state[i]);
+				// Count number of differing bits between probe signal and received signal
+				// Allow up to 4 bit errors to handle noise (e.g., from USB)
+				uint32_t n = np ^ plug_state[i];
+				int count = 0;
+				while (n)
+				{
+					n &= (n - 1);
+					count++;
+				}
+				connected[i] = (count > 4);
 			}
 		}
 		
