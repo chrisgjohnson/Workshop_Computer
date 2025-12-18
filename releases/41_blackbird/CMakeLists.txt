@@ -41,7 +41,6 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock_ll.c
-        ${CMAKE_CURRENT_LIST_DIR}/lib/events.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/events_lockfree.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/usb_lockfree.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_bootstrap.c
@@ -51,6 +50,8 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/random.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/wrblocks.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/mailbox.c
+                ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath.c
+                ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath_lut.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/flash_storage.cpp
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
@@ -176,16 +177,20 @@ target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 target_compile_options(${CARD_NAME} PRIVATE
     -O3                    # Maximum speed optimization
     -ffast-math           # Faster floating-point (safe for audio DSP)
+    -fsingle-precision-constant  # Treat float literals as float, not double (critical for RP2040 performance)
     # Note: -fno-exceptions and -fno-rtti already set by pico-sdk
     # Note: -flto disabled due to naming conflict with clock.h/clock()
 )
 
-# Copy UF2 files to UF2 directory with descriptive names
+# Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(
     TARGET ${CARD_NAME}
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
-    COMMAND ${CMAKE_COMMAND} -E copy
+    # First create a temp UF2 with erase blocks
+    COMMAND ${CMAKE_COMMAND} -E env python3 
+            ${CMAKE_CURRENT_SOURCE_DIR}/util/add_uf2_erase_block.py
             ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2
             ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}.uf2
+    COMMENT "Adding user script erase blocks to UF2"
 )

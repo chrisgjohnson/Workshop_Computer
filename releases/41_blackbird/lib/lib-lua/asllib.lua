@@ -17,8 +17,21 @@ function lfo(time, level, shape)
                }
 end
 
+local function osc_compiler(self, params)
+    local freq  = params[1] or 1
+    local level = params[2] or 5
+    local shape = params[3] or 'sine'
+
+    if type(LL_set_oscillator) == 'function' then
+        LL_set_oscillator(self.id, freq, level, shape)
+        return {} -- oscillator handles output; no ASL stages
+    else
+        return lfo(1/freq, level, shape) -- fallback to slope LFO
+    end
+end
+
 function oscillate(freq, level, shape)
-    return lfo(1/freq, level, shape)
+    return { osc_compiler, {freq, level, shape} }
 end
 
 function pulse(time, level, polarity)
@@ -52,7 +65,7 @@ end
 function ar(a, r, level, shape)
     a = a or 0.05
     r = r or 0.5
-    level = level or 7
+    level = level or 5
     shape = shape or 'log'
 
     return{ to(level, a, shape)
@@ -66,7 +79,7 @@ function adsr(a, d, s, r, shape)
     s = s or 2
     r = r or 2
 
-    return{ held{ to(7.0, a, shape)
+    return{ held{ to(5.0, a, shape)
                 , to(s, d, shape)
                 }
           , to(0, r, shape)

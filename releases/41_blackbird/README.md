@@ -1,4 +1,4 @@
-# Blackbird v1.0
+# Blackbird v1.1
 
 A fully monome-crow-compatible program card for the Music Thing Modular Workshop Computer.
 
@@ -6,7 +6,7 @@ This enables you to:
 - Live code with the workshop computer connected to a non-workshop computer running [druid](https://monome.org/docs/crow/druid/)
 - Connect a [monome norns](https://monome.org/docs/norns/) via USB and run scripts on norns that interact with crow natively (try [awake](https://llllllll.co/t/awake/21022), [buoys](https://llllllll.co/t/buoys-v1-2-0/37639), [loom](https://llllllll.co/t/loom/21091) ... many of these also allow you do use a monome grid for WS interactions)
 - Connect the workshop to a non-WS computer running [Max MSP or MaxforLive](https://monome.org/docs/crow/max-m4l/) with Ableton and use the monome-built M4L instruments to make the WS interact with Ableton or your own Max creations. 
-- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap! If you want the name of your patch saved to flash for future reference (printed to host at startup) make the first line of your script match the format `-- mycoolscript.lua`.
+- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap! If you want the name of your patch saved to flash for future reference (printed to host at startup) make the first line of your script start with three hypens `---`.
 
   > [NOTE] 
   > Make sure you wait for blackbird to fully start up before attempting to upload a lua script from druid. Startup is complete when welcome messages are printed in druid and the bottom-left LED starts flashing. Sending commands before blackbird is fully online can cause weirdness.
@@ -21,7 +21,10 @@ Tested with druid, norns, MAX/MSP, pyserial - works with **ANY** serial host tha
 
 ## Hardware Mapping
 
-Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as described below.
+Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as shown below. Details in the tables that follow.
+
+![Hardware Mapping Diagram](docs/HARDWARE_MAPPING.jpeg)
+
 
 ### Outputs
 
@@ -143,12 +146,37 @@ bb.asap = function()
 end
 ```
 
-### Choose your priorities (advanced/dangerous-living users only)
-`bb.priority()` - Balance accurate timing with accurate output (configures failure mode when overloaded). the default priority is `'timing'`, meaning that maintaining the schedule of output events is more important than either reproducing the requested signal as accuractely as possible or as early as possible. For most situations this will work perfectly.
+### Check which inputs are plugged in
 
-However, if you find the latency between input and output is too high (do try using output gates/envelopes at a free output before using this) OR you just like the sound of a computer breaking down (I do!) you can read on. You can try running `bb.priority('balanced')` which will be faster than the default but less stable. For those who want to more accurately render (probably only one, only up to about 1kHz) audio-rate waveform and are OK with the trade off that too much load WILL cause clocks and LFOs and everything to slowwwwwww dooowwwwwwn while processing any medium-heavy load there is `bb.priority('accuracy')` which causes the system to prioritize getting the output right, even if the clock get's all rubbery in order to get there. The good news is it shouldn't crash, and the lack of crash CAN be the fun part.
+**Check if inputs are connected** with `bb.connected` - Query whether a cable is plugged into any input jack. This uses the Workshop Computer's built-in normalization probe hardware to detect physical cable presence.
 
-This trade-off is inherent to the RP2040 version of the crow firmware since the original crow runs on a more powerful STM32F microcontroller. I have done my best to make the constraints here a feature and not a limitation.
+Available for all six input jacks:
+- `bb.connected.cv1` / `bb.connected.cv2` - CV inputs
+- `bb.connected.pulse1` / `bb.connected.pulse2` - Pulse inputs  
+- `bb.connected.audio1` / `bb.connected.audio2` - Audio inputs
+
+Returns `true` if a cable is plugged in, `false` if the jack is empty.
+
+Example:
+```lua
+-- optionally attenuate an incoming voltage with a knob,
+-- but use the knob if nothing is plugged in
+bb.asap = function()
+  myparameter = bb.knob.main
+  if bb.connected.cv1 then
+    myparameter = myparameter * input[1].volts
+  end
+end
+```
+
+### Performance characteristics
+
+Blackbird uses a dual-core architecture optimized for responsive, jitter-free output:
+- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 9.6kHz for zero-jitter precision
+- **Core 0 (control thread)**: Processes Lua scripts, metros, and ASL actions with ~1ms latency
+- Timer callbacks (metros, ASL triggers) are processed in 8-sample blocks for optimal balance between responsiveness and CPU efficiency
+
+This architecture provides excellent timing accuracy for musical applications while maintaining stability even under heavy scripting loads.
 
 ## Credits & Thank yous
 
@@ -159,7 +187,7 @@ Special thanks to:
 - **Chris Johnson** for the ComputerCard framework
 - **Brian Crabtree** and **Trent Gill** (monome & Whimsical Raps) for the original crow and the open source crow firmware
 - **Zack Scholl** (infinitedigits) for encouragement and proving Lua can work on RP2040 with his midi-to-cv project
-- **Ben Regnier** (Q*Ben) for extensive testing and feedback without which this would not have been possible
+- **Ben Regnier** (Q*Ben) for extensive testing, feedback, and hard work on porting bowery scripts over to bbbowery
 
 ## License
 
@@ -169,8 +197,7 @@ GPLv3 or later - see [LICENSE](LICENSE.txt) file for details.
 
 A few things that are on the radar but that I don't plan to fix (at least not now). If you think any of them are dealbreakers please file a github issue and we can debate!
 
-- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down, man!
+- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down!
 - Running scripts with references to the `ii` table produces harmless (but chatty) lua nil global errors. Ideally these would be silent until/unless i2c support is somehow added/defined for an alleged eurorack-computer-only-future-module.
 - System does not prevent receipt of serial comms during startup that are known to cause issues. This is doc'd in the overview but could be prevented in code entirely in a future version.
-- Running `crow.reset()` or `^^k` doesn't clear callback functions so they can still be called if triggers continue until they are manually cleared or redefined.
 - Wobblewobble norns script doesn't play nice with blackbird as is. I think the solution is to turn down the frequency that supercollider is triggering output.volts message dispatch in the norns-side code but this is untested.

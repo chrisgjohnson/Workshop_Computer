@@ -1,4 +1,4 @@
---- digital analog shift register
+--- digital analog shift register bb
 -- four stages of delay for an incoming cv
 -- in1: cv to delay
 -- in2: trigger to capture input & shift

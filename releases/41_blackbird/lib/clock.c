@@ -4,11 +4,16 @@
 #include <stdlib.h>
 #include <math.h>
 
-// TODO: Port timing functions to RP2040
-#include "pico/time.h" // For get_absolute_time(), etc.
+// Unified time source (ms since boot)
+#include "pico/time.h" // For get_absolute_time(), to_ms_since_boot
+// Monotonic milliseconds since boot (unifies all clock math)
+static inline uint32_t clock_now_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
 
 #include "clock_ll.h" // linked list for clocks
 #include "l_crowlib.h" // L_queue_clock_* functions
+#include "events_lockfree.h" // for clock_lockfree_reset_stats & stats
 
 // External functions to control pulse outputs
 extern void hardware_pulse_output_set(int channel, bool state);
@@ -43,18 +48,22 @@ void clock_increment_sample_counter(void) {
 ///////////////////////////////
 // private types
 
+// Fixed-point representation: Q16.16 for beats, 32-bit milliseconds for time
+#define Q16_SHIFT 16
+#define Q16_ONE   (1u << Q16_SHIFT)
+
 typedef struct{
-    // clock_update_reference is called every beat, so we're constantly updating beat & last_beat_time
-    double beat; // set in clock_update_reference(beat,_). this is the refence beat (ie. count since start)
-    double last_beat_time; // seconds_since_boot at last clock_update_reference() call
-    double beat_duration_inverse; // inverse of beat_duration
-    float  beat_duration; // seconds_per_beat (ie tempo)
+    uint32_t beat_q16;           // beats in Q16.16
+    uint32_t last_beat_time_ms;  // HAL_GetTick() snapshot at last reference update
+    uint32_t beat_duration_ms;   // milliseconds per beat (rounded)
+    uint32_t beat_duration_inv_q16; // beats per ms in Q16.16 (reciprocal of beat_duration_ms)
 } clock_reference_t;
 
 typedef struct{
-    double wakeup;
-    int    coro_id;
-    bool   running;
+    uint32_t wakeup_ms;   // absolute ms tick for next wakeup
+    uint64_t beat_q16;    // current internal beat position (Q16.16)
+    int32_t  error_q16;   // accumulated fractional ms error
+    bool     running;
 } clock_thread_HD_t;
 
 ////////////////////////////////////
@@ -65,8 +74,22 @@ static clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
 
 static clock_reference_t reference;
 
-// fp64 representation of beat count with a floating sub-beat count
-static double precise_beat_now = 0;
+// Q16.16 representation of beat count (beats with fractional component)
+static uint32_t precise_beat_q16 = 0;
+
+// Monitoring counters
+static uint32_t clock_schedule_successes = 0;
+static uint32_t clock_schedule_failures = 0;
+static uint32_t clock_active_max = 0;
+static uint32_t clock_pool_capacity = 0;
+
+static inline void clock_update_active_max(void) {
+    extern int sleep_count, sync_count;
+    uint32_t active = (uint32_t)(sleep_count + sync_count);
+    if (active > clock_active_max) {
+        clock_active_max = active;
+    }
+}
 
 /////////////////////////////////////////////
 // private declarations
@@ -80,6 +103,8 @@ void clock_init( int max_clocks )
 {
     ll_init(max_clocks); // init linked-list for managing clock threads
 
+    clock_pool_capacity = (uint32_t)max_clocks;
+
     clock_set_source( CLOCK_SOURCE_INTERNAL );
     clock_update_reference(0, 0.5); // set to zero beats, at 120bpm (0.5s/beat)
 
@@ -88,11 +113,11 @@ void clock_init( int max_clocks )
     clock_crow_init();
 }
 
-static double precision_beat_of_now(uint32_t time_now){
-    double now_seconds = (double)time_now * (double)0.001; // ms to seconds
-    double time_since_beat = now_seconds - reference.last_beat_time;
-    double beat_fraction = time_since_beat * reference.beat_duration_inverse;
-    return reference.beat + beat_fraction;
+static inline uint32_t precision_beat_of_now_q16(uint32_t time_now_ms){
+    // Compute beats since last reference update in Q16.16: elapsed_ms * beats_per_ms_q16
+    uint32_t elapsed_ms = time_now_ms - reference.last_beat_time_ms;
+    uint64_t frac_q16 = (uint64_t)elapsed_ms * (uint64_t)reference.beat_duration_inv_q16; // Q16.16 * ms
+    return reference.beat_q16 + (uint32_t)frac_q16;
 }
 
 // This function must only be called when time_now changes!
@@ -102,23 +127,26 @@ void clock_update(uint32_t time_now)
     // increments the beat count if we've crossed into the next beat
     clock_internal_run(time_now);
 
-    // calculate the fp64 beat count for .syncing checks
-    precise_beat_now = precision_beat_of_now(time_now);
+    // calculate the Q16.16 beat count for .syncing checks
+    precise_beat_q16 = precision_beat_of_now_q16(time_now);
 
     // TODO can we use <= for time comparison or does it create double-trigs?
     // this should reduce latency by 1ms if it works.
-    double dtime_now = (double)time_now;
 sleep_next:
     if(sleep_head // list is not empty
-    && sleep_head->wakeup < dtime_now){ // time to awaken
+    && sleep_head->wakeup <= time_now){ // time to awaken
         L_queue_clock_resume(sleep_head->coro_id); // event!
+        extern int sleep_count;
+        if (sleep_count > 0) sleep_count--;
         ll_insert_idle(ll_pop(&sleep_head)); // return to idle list
         goto sleep_next; // check the next sleeper too!
     }
 sync_next:
     if(sync_head // list is not empty
-    && sync_head->wakeup < precise_beat_now){ // time to awaken
+    && sync_head->wakeup <= precise_beat_q16){ // time to awaken
         L_queue_clock_resume(sync_head->coro_id); // event!
+        extern int sync_count;
+        if (sync_count > 0) sync_count--;
         ll_insert_idle(ll_pop(&sync_head)); // return to idle list
         goto sync_next; // check the next syncer too!
     }
@@ -126,41 +154,86 @@ sync_next:
 
 bool clock_schedule_resume_sleep( int coro_id, float seconds )
 {
-    double wakeup = (double)HAL_GetTick() + (double)seconds * (double)1000.0;
-    return ll_insert_event(&sleep_head, coro_id, wakeup);
+    uint32_t now_ms = clock_now_ms();
+    uint32_t delta_ms = (uint32_t)(seconds * 1000.0f + 0.5f);
+    uint32_t wakeup = now_ms + delta_ms;
+    bool ok = ll_insert_event(&sleep_head, coro_id, wakeup);
+    if (ok) {
+        extern int sleep_count;
+        sleep_count++;
+        clock_schedule_successes++;
+        clock_update_active_max();
+    } else {
+        clock_schedule_failures++;
+    }
+    return ok;
 }
 
 bool clock_schedule_resume_sync( int coro_id, float beats ){
-    double dbeats = beats;
-
-    // modulo sync time against base beat
-    double awaken = floor(reference.beat / dbeats);
-    awaken *= dbeats;
-    awaken += dbeats;
-
-    // check we haven't already passed it in the sub-beat & add another step if we have
-    // we have to loop because fractional beats values may occur >2 times within a beat
-    while(awaken <= precise_beat_now){
-        awaken += dbeats;
+    if (beats <= 0.0f) {
+        return false;
     }
 
-    return ll_insert_event(&sync_head, coro_id, awaken);
+    uint32_t dbeats_q16 = (uint32_t)(beats * (float)Q16_ONE + 0.5f);
+    if (dbeats_q16 == 0) {
+        return false;
+    }
+
+    // Use up-to-the-moment beat position to schedule the next multiple
+    uint32_t now_beats_q16 = precision_beat_of_now_q16(clock_now_ms());
+    uint32_t mod = now_beats_q16 % dbeats_q16;
+    uint32_t awaken = now_beats_q16 - mod + dbeats_q16;
+
+    // check we haven't already passed it in the sub-beat & add another step if we have
+    if (awaken <= precise_beat_q16) {
+        awaken += dbeats_q16;
+    }
+
+    bool ok = ll_insert_event(&sync_head, coro_id, awaken);
+    if (ok) {
+        extern int sync_count;
+        sync_count++;
+        clock_schedule_successes++;
+        clock_update_active_max();
+    } else {
+        clock_schedule_failures++;
+    }
+    return ok;
 }
 
 // this function directly sleeps for an amount of beats (not sync'd to the beat)
 bool clock_schedule_resume_beatsync( int coro_id, float beats ){
-    return clock_schedule_resume_sleep(coro_id, beats * reference.beat_duration);
+    // beats can be fractional; compute milliseconds using fixed-point duration
+    uint32_t beat_ms = reference.beat_duration_ms;
+    uint32_t delta_ms = (uint32_t)(beats * (float)beat_ms + 0.5f);
+    uint32_t now_ms = clock_now_ms();
+    uint32_t wakeup = now_ms + delta_ms;
+    bool ok = ll_insert_event(&sleep_head, coro_id, wakeup);
+    if (ok) {
+        extern int sleep_count;
+        sleep_count++;
+        clock_schedule_successes++;
+        clock_update_active_max();
+    } else {
+        clock_schedule_failures++;
+    }
+    return ok;
 }
 
-void clock_update_reference(double beats, double beat_duration)
+void clock_update_reference(float beats, float beat_duration)
 {
-    reference.beat_duration         = beat_duration;
-    reference.beat_duration_inverse = (double)1.0 / (double)beat_duration; // for optimized precision_beat_of_now (called every ms)
-    reference.last_beat_time        = clock_get_time_seconds(); // seconds since system boot
-    reference.beat                  = beats;
+    // Convert to fixed point
+    reference.beat_q16 = (uint32_t)(beats * (float)Q16_ONE + 0.5f);
+    uint32_t beat_ms = (uint32_t)(beat_duration * 1000.0f + 0.5f);
+    if (beat_ms == 0) {
+        beat_ms = 1; // avoid division by zero
+    }
+    reference.beat_duration_ms = beat_ms;
+    reference.beat_duration_inv_q16 = (uint32_t)(((uint64_t)Q16_ONE * 1) / beat_ms); // beats per ms in Q16
+    reference.last_beat_time_ms = clock_now_ms();
 }
 
-void clock_update_reference_from(double beats, double beat_duration, clock_source_t source)
+void clock_update_reference_from(float beats, float beat_duration, clock_source_t source)
 {
     if( clock_source == source ){
         clock_update_reference( beats, beat_duration );
@@ -170,14 +243,38 @@ void clock_update_reference_from(double beats, double beat_duration, clock_sourc
 void clock_start_from( clock_source_t source )
 {
     if( clock_source == source ){
-        L_queue_clock_start();
+        // Call global clock_start_handler in Lua (matches crow behavior)
+        extern lua_State* get_lua_state(void);
+        lua_State* L = get_lua_state();
+        if (L) {
+            lua_getglobal(L, "clock_start_handler");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
     }
 }
 
 void clock_stop_from( clock_source_t source )
 {
     if( clock_source == source ){
-        L_queue_clock_stop();
+        // Call global clock_stop_handler in Lua (matches crow behavior)
+        extern lua_State* get_lua_state(void);
+        lua_State* L = get_lua_state();
+        if (L) {
+            lua_getglobal(L, "clock_stop_handler");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
     }
 }
 
@@ -190,17 +287,18 @@ void clock_set_source( clock_source_t source )
 
 float clock_get_time_beats(void)
 {
-    return (float)precise_beat_now;
+    return (float)precise_beat_q16 * (1.0f / (float)Q16_ONE);
 }
 
-double clock_get_time_seconds(void)
+float clock_get_time_seconds(void)
 {
-    return (double)HAL_GetTick() / (double)1000.0;
+    return (float)clock_now_ms() * 0.001f;
 }
 
 float clock_get_tempo(void)
 {
-    return 60.0 * (float)reference.beat_duration_inverse;
+    if (reference.beat_duration_ms == 0) return 0.0f;
+    return 60000.0f / (float)reference.beat_duration_ms;
 }
 
 void clock_cancel_coro( int coro_id )
@@ -211,40 +309,66 @@ void clock_cancel_coro( int coro_id )
 void clock_cancel_coro_all( void )
 {
     ll_cleanup();
+    extern int sleep_count, sync_count;
+    sleep_count = 0;
+    sync_count = 0;
+}
+
+// Stats accessors
+uint32_t clock_get_schedule_failures(void)  { return clock_schedule_failures; }
+uint32_t clock_get_schedule_successes(void) { return clock_schedule_successes; }
+uint32_t clock_get_max_active_threads(void) { return clock_active_max; }
+uint32_t clock_get_pool_capacity(void)      { return clock_pool_capacity; }
+
+void clock_reset_stats(void)
+{
+    clock_schedule_failures = 0;
+    clock_schedule_successes = 0;
+    // current active is a baseline for max after reset
+    extern int sleep_count, sync_count;
+    clock_active_max = (uint32_t)(sleep_count + sync_count);
+    // reset clock resume queue stats too
+    clock_lockfree_reset_stats();
 }
 
 
 /////////////////////////////////////////////////
 // in clock_internal.h
 
-static double internal_interval_seconds; // seconds. defined by internal BPM
-static double internal_beat; // set by clock_internal_start(beat,_). count of beats since 0
+static uint32_t internal_interval_ms_q16; // beat interval in ms Q16.16
+static uint32_t internal_interval_ms;     // beat interval in whole ms (rounded)
 
 void clock_internal_init(void)
 {
     internal.running = false;
     clock_internal_set_tempo(120);
-    clock_internal_start(0.0, true);
+    clock_internal_start(0.0f, true);
 }
 
 void clock_internal_set_tempo( float bpm )
 {
-    internal_interval_seconds = (double)60.0 / (double)bpm;
-    clock_internal_start( internal_beat, false );
+    if (bpm <= 0.0f) bpm = 120.0f;
+    // interval in ms as Q16.16: (60000 / bpm) * 2^16
+    float interval_ms = 60000.0f / bpm;
+    internal_interval_ms = (uint32_t)(interval_ms + 0.5);
+    internal_interval_ms_q16 = (uint32_t)(interval_ms * (double)Q16_ONE + 0.5);
+    clock_internal_start( (float)(internal.beat_q16 * (1.0f / (float)Q16_ONE)), false );
 }
 
 void clock_internal_start( float new_beat, bool transport_start )
 {
-    internal_beat = new_beat;
-    clock_update_reference_from( internal_beat
-                               , internal_interval_seconds
+    // Initialize internal beat state
+    internal.beat_q16 = (uint64_t)(new_beat * (float)Q16_ONE + 0.5f);
+    clock_update_reference_from( (float)new_beat
+                               , (float)internal_interval_ms / 1000.0f
                                , CLOCK_SOURCE_INTERNAL );
 
     if( transport_start ){
         clock_start_from( CLOCK_SOURCE_INTERNAL ); // user callback
     }
-    internal.wakeup  = 0; // force event
-    internal.running = true;
+    internal.wakeup_ms  = 0; // force event
+    internal.error_q16  = 0;
+    internal.running    = true;
 }
 
 void clock_internal_stop(void)
@@ -264,32 +388,28 @@ void clock_internal_stop(void)
 // sync() calls & ensures they don't double-trigger.
 static void clock_internal_run(uint32_t ms)
 {
-    static double error = 0.0; // track ms error across clock pulses
     if( internal.running ){
-        double time_now = ms;
-        if( internal.wakeup < time_now ){ // TODO can this be <= for 1ms less latency?
-            internal_beat += 1;
-            
+        uint32_t time_now = ms;
+        if( internal.wakeup_ms <= time_now ){ // allow wake at exact tick
+            internal.beat_q16 += Q16_ONE;
+
             // Use reference tempo if clock source is external, otherwise use internal tempo
-            double beat_interval = (clock_source == CLOCK_SOURCE_CROW) 
-                                 ? reference.beat_duration 
-                                 : internal_interval_seconds;
-            
-            clock_update_reference_from( internal_beat
-                                       , beat_interval
+            float beat_interval_sec = (clock_source == CLOCK_SOURCE_CROW)
+                                    ? ((float)reference.beat_duration_ms / 1000.0f)
+                                    : ((float)internal_interval_ms / 1000.0f);
+
+            clock_update_reference_from( (float)internal.beat_q16 / (float)Q16_ONE
+                                       , beat_interval_sec
                                        , CLOCK_SOURCE_INTERNAL );
-            internal.wakeup = time_now + beat_interval * (double)1000.0;
-            error += 1+ floor(internal.wakeup) - internal.wakeup;
-            if(error > (double)0.0){
-                internal.wakeup -= (double)1.0;
-                error--;
+
+            // Schedule next wakeup in integer ms with fractional error accumulation
+            internal.wakeup_ms += (internal_interval_ms_q16 >> Q16_SHIFT);
+            internal.error_q16 += (int32_t)(internal_interval_ms_q16 & (Q16_ONE - 1));
+            if (internal.error_q16 >= (int32_t)Q16_ONE) {
+                internal.wakeup_ms += 1;
+                internal.error_q16 -= (int32_t)Q16_ONE;
             }
-            
-            // Pulse outputs are now controlled via Lua :clock() coroutines
-            // (C code no longer triggers them automatically)
         }
-        
-        // Pulse output timing is now handled via Lua
     }
 }
 
@@ -299,24 +419,26 @@ static void clock_internal_run(uint32_t ms)
 
 static bool clock_crow_last_time_set;
 static int clock_crow_counter;
-static double clock_crow_last_time;
+static uint32_t clock_crow_last_time_ms;
 
 #define DURATION_BUFFER_LENGTH 4
 
-static float duration_buf[DURATION_BUFFER_LENGTH] = {0};
+static uint32_t duration_buf[DURATION_BUFFER_LENGTH] = {0}; // beat durations in ms
 static uint8_t beat_duration_buf_pos = 0;
 static uint8_t beat_duration_buf_len = 0;
-static float mean_sum;
-static float mean_scale;
+static uint32_t mean_sum_ms;
 
-static float crow_in_div = 4.0;
+static uint32_t crow_in_div_q16 = (4u << Q16_SHIFT); // beats per pulse (Q16.16)
 
 
 void clock_crow_init(void)
 {
     clock_crow_counter = 0;
     clock_crow_last_time_set = false;
-    mean_sum = 0;
+    mean_sum_ms = 0;
+    beat_duration_buf_len = 0;
+    beat_duration_buf_pos = 0;
+    for (int i = 0; i < DURATION_BUFFER_LENGTH; ++i) duration_buf[i] = 0;
 }
 
 // called by an event received on input
@@ -327,39 +449,46 @@ void clock_input_handler( int id, float freq )
 }
 void clock_crow_handle_clock(void)
 {
-    float beat_duration;
-    double current_time = clock_get_time_seconds();
+    uint32_t current_time_ms = clock_now_ms();
 
     if( clock_crow_last_time_set == false ){
         clock_crow_last_time_set = true;
-        clock_crow_last_time = current_time;
+        clock_crow_last_time_ms = current_time_ms;
     } else {
-        beat_duration = (float)(current_time - clock_crow_last_time)
-                            * crow_in_div;
-        if( beat_duration > 4.0 ){ // assume clock stopped
-            clock_crow_last_time = current_time;
+        uint32_t elapsed_ms = current_time_ms - clock_crow_last_time_ms;
+
+        // Compute beat duration in ms: elapsed_ms * crow_in_div_q16 >> 16
+        uint32_t beat_duration_ms = (uint32_t)(((uint64_t)elapsed_ms * (uint64_t)crow_in_div_q16) >> Q16_SHIFT);
+
+        if( beat_duration_ms > 4000u ){ // assume clock stopped (>4s per beat)
+            clock_crow_last_time_ms = current_time_ms;
         } else {
+            // Ring buffer average (simple sum/len)
             if( beat_duration_buf_len < DURATION_BUFFER_LENGTH ){
                 beat_duration_buf_len++;
-                mean_scale = 1.0 / beat_duration_buf_len;
             }
 
-            float a = beat_duration * mean_scale;
-            mean_sum = mean_sum + a;
-            mean_sum = mean_sum - duration_buf[beat_duration_buf_pos];
-            duration_buf[beat_duration_buf_pos] = a;
+            // Subtract the old value at pos and add new
+            uint32_t old = duration_buf[beat_duration_buf_pos];
+            mean_sum_ms += beat_duration_ms;
+            mean_sum_ms -= old;
+            duration_buf[beat_duration_buf_pos] = beat_duration_ms;
             beat_duration_buf_pos = (beat_duration_buf_pos + 1) % DURATION_BUFFER_LENGTH;
 
             clock_crow_counter++;
-            clock_crow_last_time = current_time;
+            clock_crow_last_time_ms = current_time_ms;
 
-            double beat = clock_crow_counter / crow_in_div;
-            clock_update_reference_from(beat, (double)mean_sum, CLOCK_SOURCE_CROW);
+            // Compute beats and average duration in float for API compatibility
+            uint64_t beat_q16 = (uint64_t)clock_crow_counter * (uint64_t)crow_in_div_q16;
+            float beat = (float)beat_q16 / (float)Q16_ONE;
+            float beat_duration_sec = (beat_duration_buf_len == 0) ? 0.0f : ((float)mean_sum_ms / (float)beat_duration_buf_len) * 0.001f;
+            clock_update_reference_from(beat, beat_duration_sec, CLOCK_SOURCE_CROW);
         }
     }
 }
 
 void clock_crow_in_div( float div )
 {
-    crow_in_div = 1.0/div;
+    if (div <= 0.0f) div = 1.0f;
+    crow_in_div_q16 = (uint32_t)((1.0f / div) * (float)Q16_ONE + 0.5f);
 }

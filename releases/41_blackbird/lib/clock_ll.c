@@ -7,6 +7,10 @@
 
 static clock_node_t* clock_pool; // storage for the nodes
 
+// Exposed counters for monitoring
+int sleep_count = 0;
+int sync_count = 0;
+
 // clock_pool elements are moved between these 3 lists
 clock_node_t* idle_head = NULL;
 clock_node_t* sleep_head = NULL;
@@ -47,14 +51,17 @@ void ll_insert_idle(clock_node_t* node){
 }
 
 // schedule an event & place it in the provided LL (sync / sleep) in order
-bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
+// wakeup is interpreted as:
+//   sleep list: absolute ms tick (HAL_GetTick)
+//   sync list:  beats in Q16.16
+bool ll_insert_event(clock_node_t** head, int coro_id, uint32_t wakeup){
     // take a node from the idle list
     clock_node_t* new_node = ll_pop(&idle_head);
     if(!new_node) return false;
 
     clock_node_t* previous = NULL;
     clock_node_t* compare = *head; // will be NULL for an empty list
-    while(compare && seconds_or_beats >= compare->wakeup){
+    while(compare && wakeup >= compare->wakeup){
         // node exists & our new_node should come *later*
         previous = compare;
         compare = compare->next;
@@ -63,7 +70,7 @@ bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
     // fill in the node
     new_node->next    = compare; // can be = NULL if new_node at end of the list
     new_node->coro_id = coro_id;
-    new_node->wakeup  = seconds_or_beats;
+    new_node->wakeup  = wakeup;
 
     // link from previous to new_node
     if(previous){
@@ -76,6 +83,7 @@ bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
 
 // remove the node referenced by coro_id
 void ll_remove_by_id(int coro_id){
+    extern int sleep_count, sync_count;
     for(int i=0; i<2; i++){
         clock_node_t* previous = NULL;
         clock_node_t** head = i==0 ? &sleep_head : &sync_head; // save for removal
@@ -91,6 +99,13 @@ void ll_remove_by_id(int coro_id){
                 }
                 // push it to the idle list
                 ll_insert_idle(compare);
+
+                // update counts
+                if (head == &sleep_head) {
+                    if (sleep_count > 0) sleep_count--;
+                } else {
+                    if (sync_count > 0) sync_count--;
+                }
                 break; // assume only 1 match can exist
             }
             // node exists but not a match

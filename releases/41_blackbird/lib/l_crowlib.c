@@ -8,13 +8,18 @@
 #include "lib/ii.h"         // ii_*()
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
+#include "lib/metro.h"       // Metro_get_period_seconds
+#include "lib/clock.h"       // clock_cancel_coro_all()
+#include "pico/time.h"       // time_us_32 for diagnostics
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
 // Declare get_input_state_simple function for compatibility (implemented in main.cpp)
 extern float get_input_state_simple(int channel); // returns input voltage in volts
-#include "lib/events.h"     // event_t, event_post()
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
 #include "ll_timers.h"       // Timer_Set_Block_Size()
+#include "clock_ll.h"        // ll_cleanup()
+#include "lib/events_lockfree.h" // events_lockfree_clear()
+#include "fastmath.h"
 #include <string.h>
 
 #define L_CL_MIDDLEC 		(261.63f)
@@ -28,12 +33,13 @@ static int _tell_get_out( lua_State* L );
 static int _tell_get_cv( lua_State* L );
 static int _lua_void_function( lua_State* L );
 static int _delay( lua_State* L );
+static void _install_ii_stub(lua_State* L);
+
+static int _ii_stub_call(lua_State* L);
+static int _ii_stub_index(lua_State* L);
 
 // Forward declarations for L_handle_* functions
-void L_handle_metro( event_t* e );
-void L_handle_clock_resume( event_t* e );
-void L_handle_clock_start( event_t* e );
-void L_handle_clock_stop( event_t* e );
+void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
 
 // function() end
 // useful as a do-nothing callback
@@ -42,57 +48,40 @@ static int _lua_void_function( lua_State* L ){
 	return 0;
 }
 
-// ---- bb.priority implementation (file-scope) ----
-// Behavior:
-//  - bb.priority()            -> returns 'timing', 'balanced', 'accuracy', or current custom block size (int)
-//  - bb.priority('timing')    -> sets size 480 (if still safe) and returns 'timing'
-//  - bb.priority('balanced')  -> sets size 240 (if still safe) and returns 'balanced'
-//  - bb.priority('accuracy')  -> sets size 4 (if safe) and returns 'accuracy'
-//  - bb.priority(N)           -> sets size N (clamped to [1,MAX]) if safe;
-//                                returns mapped string for 4/240/480 else the applied integer size
-//  - After processing starts (guard active) requests are ignored; current descriptor returned.
-int l_bb_priority(lua_State* L) {
-    int nargs = lua_gettop(L);
-    if (nargs >= 1) {
-        if (lua_isnumber(L, 1)) {
-            int requested = luaL_checkinteger(L, 1);
-            if (requested < 1) requested = 1;
-            if (requested > TIMER_BLOCK_SIZE_MAX) requested = TIMER_BLOCK_SIZE_MAX;
-            (void)Timer_Set_Block_Size(requested); // deferred
-        } else if (lua_isstring(L, 1)) {
-            const char* requested = lua_tostring(L, 1);
-            if (strcmp(requested, "accuracy") == 0) {
-                (void)Timer_Set_Block_Size(4);
-            } else if (strcmp(requested, "balanced") == 0) {
-                (void)Timer_Set_Block_Size(240);
-            } else if (strcmp(requested, "timing") == 0) {
-                (void)Timer_Set_Block_Size(480);
-            } else {
-                // Unrecognized string: treat as 'timing' (default)
-                (void)Timer_Set_Block_Size(480);
-            }
-        } else {
-            // Ignore other types
-        }
-    }
-
+// no-op callable table for environments without ii support
+static int _ii_stub_call(lua_State* L) {
     lua_settop(L, 0);
-    int current = Timer_Get_Block_Size();
-    if (Timer_Block_Size_Change_Pending()) {
-        // Report the target that's about to be applied
-        int pending = Timer_Get_Block_Size(); // current still old; we don't expose internal pending value
-        // We can't directly read pending here without extra API; keep reporting current classification
-    }
-    if (current == 4) {
-        lua_pushstring(L, "accuracy");
-    } else if (current == 240) {
-        lua_pushstring(L, "balanced");
-    } else if (current == 480) {
-        lua_pushstring(L, "timing");
-    } else {
-        lua_pushinteger(L, current);
-    }
+    return 0;
+}
+
+static int _ii_stub_index(lua_State* L) {
+    // args: (self, key)
+    // create and memoize a new stub table so chained lookups work:
+    // ii.jf.mode(1) -> ii.jf (table) -> .mode (table) -> (1) (no-op)
+    lua_newtable(L);
+    luaL_getmetatable(L, "ii_stub_mt");
+    lua_setmetatable(L, -2);
+
+    lua_pushvalue(L, 2);   // key
+    lua_pushvalue(L, -2);  // value (child stub)
+    lua_rawset(L, 1);
     return 1;
+}
+
+static void _install_ii_stub(lua_State* L) {
+    if (luaL_newmetatable(L, "ii_stub_mt")) {
+        lua_pushcfunction(L, _ii_stub_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, _ii_stub_call);
+        lua_setfield(L, -2, "__call");
+    }
+    lua_pop(L, 1); // pop metatable
+
+    lua_newtable(L);
+    luaL_getmetatable(L, "ii_stub_mt");
+    lua_setmetatable(L, -2);
+    lua_setglobal(L, "ii");
+    lua_settop(L, 0);
 }
 
 static void _load_lib(lua_State* L, char* filename, char* luaname){
@@ -119,7 +108,21 @@ void l_crowlib_init(lua_State* L){
 
     // load C funcs into lua env first
     l_ii_mod_preload(L);
-	_load_lib(L, "ii", "ii");
+
+    // ii is optional in this firmware/emulator; don't let missing ii abort user init.
+    // Only load lua/ii.lua if the backing C hooks exist; otherwise install a no-op stub.
+    lua_getglobal(L, "c_ii_load");
+    bool have_ii_backend = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (have_ii_backend) {
+        _load_lib(L, "ii", "ii");
+    }
+    lua_getglobal(L, "ii");
+    bool have_ii_global = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (!have_ii_global) {
+        _install_ii_stub(L);
+    }
 
 	_load_lib(L, "calibrate", "cal");
 	_load_lib(L, "sequins", "sequins");
@@ -243,6 +246,10 @@ void l_crowlib_init(lua_State* L){
 
 	//////// RANDOM
 
+    // Install fast math overrides (LUT + integer core) and patch math.*
+    // Saves originals as math.ssin/scos/satan/sexp/slog/spow
+    fastmath_lua_install(L, 1);
+
 	// hook existing math.random into math.srandom
 	lua_getglobal(L, "math"); // 1
 	lua_getfield(L, 1, "random"); // 2
@@ -283,19 +290,6 @@ void l_crowlib_init(lua_State* L){
     } else {
         lua_pop(L, 1);
     }
-
-    // bb.priority getter/setter implemented in C for validation and dynamic block size
-    // Use global-static so we can declare function at file scope (embedded C forbids nested funcs)
-    // Forward declare function
-    extern int l_bb_priority(lua_State* L);
-    // Ensure default value is set before first use
-    Timer_Set_Block_Size(480);
-    lua_getglobal(L, "bb"); // @1
-    lua_pushcfunction(L, l_bb_priority);
-    lua_setfield(L, -2, "priority"); // bb.priority
-    // Initialize block size to default 'timing' explicitly
-    Timer_Set_Block_Size(480);
-    lua_pop(L, 1); // pop bb
 }
 
 void l_crowlib_emptyinit(lua_State* L){
@@ -304,26 +298,59 @@ void l_crowlib_emptyinit(lua_State* L){
     lua_setglobal(L, "init");
 }
 
-
 int l_crowlib_crow_reset( lua_State* L ){
-    S_reset();
-
-    // Ensure bb.priority still exists after any user manipulations
-    lua_getglobal(L, "bb"); // @1
-    if(!lua_isnil(L, 1)){
-        lua_getfield(L, 1, "priority"); // @2
-        if(lua_isnil(L, 2)){
-            lua_pop(L, 2); // pop nil and bb
-            lua_getglobal(L, "bb"); // @1
-            lua_pushcfunction(L, l_bb_priority);
-            lua_setfield(L, -2, "priority");
-            lua_pop(L, 1);
-        } else {
-            lua_settop(L, 0); // priority exists
-        }
-    } else {
-        lua_settop(L, 0);
+    // Optional debug: print Lua heap usage around reset.
+    // Enable at runtime by setting: bb.debug_reset_mem = true
+    bool debug_reset_mem = false;
+    lua_getglobal(L, "bb");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "debug_reset_mem");
+        debug_reset_mem = lua_toboolean(L, -1);
+        lua_pop(L, 1);
     }
+    lua_pop(L, 1);
+
+    if (debug_reset_mem) {
+        int kb = lua_gc(L, LUA_GCCOUNT, 0);
+        int b = lua_gc(L, LUA_GCCOUNTB, 0);
+        printf("[reset] lua heap before: %d.%03d KB\n", kb, b);
+    }
+
+    S_reset();
+    
+    // Clean up C-side clock list to prevent "cant resume cancelled clock" errors
+    ll_cleanup();
+
+    // Cancel any scheduled clock wakeups and reset internal counters
+    // (independent of Lua's clock.cleanup implementation)
+    clock_cancel_coro_all();
+
+    // Stop all metros at the C level to ensure no timer callbacks continue
+    Metro_stop_all();
+    
+    // Clear any pending events (clock resumes, etc) that might trigger errors
+    events_lockfree_clear();
+
+    // Clean up Lua-side clock state (clears threads, resets tempo)
+    lua_getglobal(L, "clock");
+    if (!lua_isnil(L, -1)) {
+        lua_getfield(L, -1, "cleanup");
+        if (lua_isfunction(L, -1)) {
+            lua_call(L, 0, 0);
+        } else {
+            lua_pop(L, 1); // pop non-function
+        }
+
+        // Hard reset clock tables to drop any lingering coroutine references.
+        // Avoid relying on Lua-side iteration semantics during mutation.
+        lua_newtable(L);
+        lua_setfield(L, -2, "threads");
+        lua_pushinteger(L, 0);
+        lua_setfield(L, -2, "id");
+        lua_newtable(L);
+        lua_setfield(L, -2, "transport");
+    }
+    lua_pop(L, 1); // pop clock or nil
 
     lua_getglobal(L, "input"); // @1
 for(int i=1; i<=2; i++){
@@ -340,6 +367,41 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         lua_pushvalue(L, 2); // @4 copy of input[n]
         lua_call(L, 1, 0);
 }
+    lua_settop(L, 0);
+
+    // bb.pulsein[1/2] defaults: clear callbacks and modes to keep hardware safe
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "pulsein"); // @2
+        if(!lua_isnil(L, 2)){
+            for(int i = 1; i <= 2; i++){
+                lua_pushinteger(L, i); // @3
+                lua_gettable(L, 2); // @3 = bb.pulsein[i]
+                if(lua_isnil(L, 3)){
+                    lua_settop(L, 2);
+                    continue;
+                }
+
+                // pulsein[i].mode = 'none'
+                lua_pushstring(L, "none");
+                lua_setfield(L, 3, "mode");
+
+                // pulsein[i].direction = 'both' (match crow.reset defaults)
+                lua_pushstring(L, "both");
+                lua_setfield(L, 3, "direction");
+
+                // pulsein[i].division = 1 -- keeps default external clock div
+                lua_pushnumber(L, 1.0);
+                lua_setfield(L, 3, "division");
+
+                // pulsein[i].change = nil (clears callback)
+                lua_pushnil(L);
+                lua_setfield(L, 3, "change");
+
+                lua_settop(L, 2); // drop bb.pulsein[i]
+            }
+        }
+    }
     lua_settop(L, 0);
 
     lua_getglobal(L, "output"); // @1
@@ -361,6 +423,11 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         // output[n].done = function() end
         lua_getglobal(L, "nop_fn"); // @3
         lua_setfield(L, 2, "done"); // pops nop_fn -> @2
+        
+        // output[n].action = nil (clear ASL action)
+        lua_pushnil(L);
+        lua_setfield(L, 2, "action");
+
         // output[n]:clock('none')
         lua_getfield(L, 2, "clock"); // @3
         lua_pushvalue(L, 2); // @4 copy of output[n]
@@ -399,6 +466,15 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         if(!lua_isnil(L, 2)){
             lua_call(L, 0, 0);
         }
+
+        // Also call metro.reset() (if present) to clear event closures and defaults.
+        // metro.free_all() stops metros but does not clear Metro.metros[i].event.
+        lua_getfield(L, 1, "reset");
+        if (lua_isfunction(L, -1)) {
+            lua_call(L, 0, 0);
+        } else {
+            lua_pop(L, 1);
+        }
     }
     lua_settop(L, 0);
 
@@ -407,16 +483,6 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     if(!lua_isnil(L, 1)){ // if public is not nil
     	lua_getfield(L, 1, "clear");
     	if(!lua_isnil(L, 2)){
-            lua_call(L, 0, 0);
-        }
-    }
-    lua_settop(L, 0);
-
-    // clock.cleanup() - only if clock exists
-    lua_getglobal(L, "clock"); // @1
-    if(!lua_isnil(L, 1)){
-        lua_getfield(L, 1, "cleanup");
-        if(!lua_isnil(L, 2)){
             lua_call(L, 0, 0);
         }
     }
@@ -453,14 +519,74 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // bb.asap = nil - clear user-defined high-frequency callback
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_pushnil(L); // @2
+        lua_setfield(L, 1, "asap"); // bb.asap = nil
+    }
+    lua_settop(L, 0);
+
+    // Clear callback globals that are installed via the C API (lua_setglobal) and therefore
+    // bypass the _G __newindex tracer used for _user tracking.
+    // If left uncleared, these can retain closures (and their upvalues) across script runs.
+    lua_pushnil(L);
+    lua_setglobal(L, "_switch_change_callback");
+    lua_pushnil(L);
+    lua_setglobal(L, "_pulsein1_change_callback");
+    lua_pushnil(L);
+    lua_setglobal(L, "_pulsein2_change_callback");
+    lua_settop(L, 0);
+
+    // Clear user globals using Crow's _user table approach.
+    // This prevents user scripts from retaining references across script reload cycles
+    // when the host only calls crow.reset() between uploads.
+    lua_getglobal(L, "_user"); // @1
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L); // @2 (first key for lua_next)
+        while (lua_next(L, 1) != 0) {
+            // stack: _user (1), key (2), value (3)
+            const char* key = lua_tostring(L, 2);
+            if (key) {
+                lua_pushnil(L);
+                lua_setglobal(L, key); // _G[key] = nil
+            }
+            lua_pop(L, 1); // pop value, keep key
+        }
+    }
+    lua_settop(L, 0);
+
+    // Reset _user tracking table
+    lua_newtable(L);
+    lua_setglobal(L, "_user");
+    lua_settop(L, 0);
+
+    // Reinstall _G tracer so future globals are tracked and can be cleared
+    if (luaL_dostring(L,
+        "local function __bb_trace(t, k, v)\n"
+        "  _user[k] = true\n"
+        "  rawset(t, k, v)\n"
+        "end\n"
+        "local mt = getmetatable(_G) or {}\n"
+        "mt.__newindex = __bb_trace\n"
+        "setmetatable(_G, mt)\n"
+    )) {
+        lua_pop(L, 1);
+    }
+
+    // Force garbage collection to reclaim memory from previous script
+    // Do two full cycles (mirrors existing reload behavior elsewhere).
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    lua_gc(L, LUA_GCCOLLECT, 0);
+
+    if (debug_reset_mem) {
+        int kb = lua_gc(L, LUA_GCCOUNT, 0);
+        int b = lua_gc(L, LUA_GCCOUNTB, 0);
+        printf("[reset] lua heap after:  %d.%03d KB\n", kb, b);
+    }
+
     return 0;
 }
-
-
-/////// static declarations
-
-// Just Intonation calculators
-// included in lualink.c as global lua functions
 
 static int justvolts(lua_State* L, float mul);
 
@@ -703,7 +829,7 @@ static int _ii_follow_reset( lua_State* L ){
 // C.tell( 'output', channel, get_state( channel ))
 static int _tell_get_out( lua_State* L ){
 	int chan = luaL_checknumber(L, -1);
-    Caw_printf( "^^output(%i,%f)", chan, (double)AShaper_get_state(chan-1));
+    Caw_printf( "^^output(%i,%f)", chan, (float)AShaper_get_state(chan-1));
     lua_settop(L, 0);
     return 0;
 }
@@ -716,21 +842,43 @@ int chan = luaL_checknumber(L, -1);
     return 0;
 }
 
-// Lock-free metro queuing function - replaces old mutex-based version
+// Lock-free metro queuing function
 void L_queue_metro( int id, int state )
 {
-    // Try lock-free queue first (much faster, never blocks Core 1)
-    if (metro_lockfree_post(id, state)) {
-        return; // Success - event queued without blocking
+    // Queue via lock-free system (never blocks Core 1)
+    if (!metro_lockfree_post(id, state)) {
+        // Queue full - drop event (should never happen with proper queue sizing)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            printf("Warning: Metro queue full, dropped %lu events\n", (unsigned long)drop_count);
+        }
     }
-    
-    // Lock-free queue full - fallback to mutex queue (rare case)
-    printf("Warning: Lock-free metro queue full, using fallback\n");
-    event_t e = { .handler = L_handle_metro
-                , .index.i = id
-                , .data.i  = state
-                };
-    event_post(&e);
+}
+
+// =============================================================================
+// Diagnostics for metro and clock callbacks
+// =============================================================================
+static uint32_t g_metro_cb_worst_us = 0;
+static uint32_t g_metro_cb_last_us = 0;
+static uint32_t g_metro_cb_overruns = 0;
+
+uint32_t metro_cb_worst_us(void)      { return g_metro_cb_worst_us; }
+uint32_t metro_cb_last_us(void)       { return g_metro_cb_last_us; }
+uint32_t metro_cb_overrun_count(void) { return g_metro_cb_overruns; }
+void metro_cb_reset_stats(void) {
+    g_metro_cb_worst_us = 0;
+    g_metro_cb_last_us = 0;
+    g_metro_cb_overruns = 0;
+}
+
+static uint32_t g_clock_resume_cb_worst_us = 0;
+static uint32_t g_clock_resume_cb_last_us = 0;
+
+uint32_t clock_resume_cb_worst_us(void) { return g_clock_resume_cb_worst_us; }
+uint32_t clock_resume_cb_last_us(void)  { return g_clock_resume_cb_last_us; }
+void clock_resume_cb_reset_stats(void) {
+    g_clock_resume_cb_worst_us = 0;
+    g_clock_resume_cb_last_us = 0;
 }
 
 // Forward declarations for output batching (defined in main.cpp)
@@ -757,6 +905,8 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
     int stage = event->stage;
     
     // Call the global metro_handler function in Lua like real crow
+    uint32_t start_us = time_us_32();
+
     lua_getglobal(L, "metro_handler");
     if (lua_isfunction(L, -1)) {
         lua_pushinteger(L, metro_id);  // First argument: metro ID
@@ -777,81 +927,52 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
     // OPTIMIZATION 2: Flush batched outputs
     // ===============================================
     output_batch_flush();
+
+    // Diagnostics: measure callback duration and flag overruns
+    uint32_t elapsed_us = time_us_32() - start_us;
+    g_metro_cb_last_us = elapsed_us;
+    if (elapsed_us > g_metro_cb_worst_us) {
+        g_metro_cb_worst_us = elapsed_us;
+    }
+
+    // Overrun detection: compare to configured metro period if available
+    float period_s = Metro_get_period_seconds(metro_id);
+    if (period_s > 0.0f) {
+        uint32_t period_us = (uint32_t)(period_s * 1e6f + 0.5f);
+        if (elapsed_us > period_us) {
+            g_metro_cb_overruns++;
+        }
+    }
 }
 
 void L_queue_clock_resume( int coro_id )
 {
-    event_t e = { .handler = L_handle_clock_resume
-                , .index.i = coro_id
-                };
-    event_post(&e);
-}
-
-void L_queue_clock_start( void )
-{
-    event_t e = { .handler = L_handle_clock_start };
-    event_post(&e);
-}
-
-void L_queue_clock_stop( void )
-{
-    event_t e = { .handler = L_handle_clock_stop };
-    event_post(&e);
-}
-
-// Handler functions - L_handle_metro calls Lua metro_handler function
-void L_handle_metro( event_t* e )
-{
-    // This function is called from the event system when a timer fires
-    // It needs to call the Lua metro_handler function safely
-    
-    extern lua_State* get_lua_state(void); // Forward declaration
-    lua_State* L = get_lua_state();
-    
-    if (!L) {
-        printf("L_handle_metro: no Lua state available\n");
-        return;
-    }
-    
-    int metro_id = e->index.i;
-    int stage = e->data.i;
-    
-    // Call the global metro_handler function in Lua like real crow
-    lua_getglobal(L, "metro_handler");
-    if (lua_isfunction(L, -1)) {
-        lua_pushinteger(L, metro_id);  // First argument: metro ID
-        lua_pushinteger(L, stage);     // Second argument: stage/count
-        
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("metro_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
+    if (!clock_lockfree_post(coro_id)) {
+        // Queue full - drop event (should never happen with proper queue sizing)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            printf("Warning: Clock resume queue full, dropped %lu events\n", (unsigned long)drop_count);
         }
-    } else {
-        // metro_handler not defined - this is normal if no metros are active
-        lua_pop(L, 1);
     }
 }
 
-void L_handle_clock_resume( event_t* e )
-{
+// L_queue_clock_start and L_queue_clock_stop removed - clock start/stop now use direct calls
+// (Core 0 -> Core 0, no inter-core communication needed)
+
+static void handle_clock_resume_common(int coro_id) {
     extern lua_State* get_lua_state(void);
     lua_State* L = get_lua_state();
-    
+
     if (!L) {
         printf("L_handle_clock_resume: no Lua state available\n");
         return;
     }
-    
-    int coro_id = e->index.i;
-    
-    // Call the global clock_resume_handler function in Lua
+
+    uint32_t start_us = time_us_32();
+
     lua_getglobal(L, "clock_resume_handler");
     if (lua_isfunction(L, -1)) {
-        lua_pushinteger(L, coro_id);  // Pass coroutine ID
-        
-        // Protected call to prevent crashes
+        lua_pushinteger(L, coro_id);
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("clock_resume_handler error: %s\n", error ? error : "unknown");
@@ -860,52 +981,41 @@ void L_handle_clock_resume( event_t* e )
     } else {
         lua_pop(L, 1);
     }
+
+    uint32_t elapsed_us = time_us_32() - start_us;
+    g_clock_resume_cb_last_us = elapsed_us;
+    if (elapsed_us > g_clock_resume_cb_worst_us) {
+        g_clock_resume_cb_worst_us = elapsed_us;
+    }
 }
 
-void L_handle_clock_start( event_t* e )
+void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event)
+{
+    handle_clock_resume_common(event->coro_id);
+}
+
+void L_handle_asl_done_lockfree( asl_done_event_lockfree_t* event )
 {
     extern lua_State* get_lua_state(void);
     lua_State* L = get_lua_state();
     
     if (!L) {
-        printf("L_handle_clock_start: no Lua state available\n");
+        printf("L_handle_asl_done_lockfree: no Lua state available\n");
         return;
     }
     
-    // Call the global clock_start_handler function in Lua
-    lua_getglobal(L, "clock_start_handler");
-    if (lua_isfunction(L, -1)) {
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("clock_start_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
-}
-
-void L_handle_clock_stop( event_t* e )
-{
-    extern lua_State* get_lua_state(void);
-    lua_State* L = get_lua_state();
+    int channel = event->channel + 1; // Convert to 1-based for Lua
     
-    if (!L) {
-        printf("L_handle_clock_stop: no Lua state available\n");
-        return;
-    }
+    // Use crow-style ASL completion callback: output[channel].done()
+    char lua_call[128];
+    snprintf(lua_call, sizeof(lua_call),
+        "if output and output[%d] and output[%d].done then output[%d].done() end",
+        channel, channel, channel);
     
-    // Call the global clock_stop_handler function in Lua
-    lua_getglobal(L, "clock_stop_handler");
-    if (lua_isfunction(L, -1)) {
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("clock_stop_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
-        }
-    } else {
+    // Execute Lua callback
+    if (luaL_dostring(L, lua_call) != LUA_OK) {
+        const char* error = lua_tostring(L, -1);
+        printf("ASL done callback error: %s\n", error ? error : "unknown");
         lua_pop(L, 1);
     }
 }
