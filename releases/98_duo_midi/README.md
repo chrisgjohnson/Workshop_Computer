@@ -1,4 +1,4 @@
-# Duo MIDI (MTM Workshop Computer Card)
+# Duo MIDI
 
 A duophonic MIDI-to-CV + envelope card! The first ever card released using Blackbird as a platform under the hood.
 
