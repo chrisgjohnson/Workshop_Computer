@@ -12,7 +12,7 @@ The version of blackbird included in the UF2 (version 1.1M) is technically unrel
 
 - Receives MIDI note, velocity, pitch bend, and CC (mod wheel).
 - Outputs **two pitches** (duophonic or mirrored mono).
-- Outputs **two ASR envelopes** (as audio/DC outputs).
+- Outputs **two ASR envelopes** (at the audio outputs).
 - Outputs **two triggers / gates** on voice assignment.
 
 ## Controls
