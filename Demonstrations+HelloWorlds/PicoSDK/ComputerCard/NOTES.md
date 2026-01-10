@@ -25,7 +25,7 @@ uint32_t b = 2;
 
 int32_t c = a / b;
 ```
-sets `c` not to -5, as might be expected, but to 2147483643. (`a` is implicitly converted to an `unsigned int` with value 2^32 - 10, which is then divided by 2.) 
+sets `c` not to -5, as might be expected, but to 2147483643. (`a` is implicitly converted to an `unsigned int` with value $2^{32} - 10$, which is then divided by 2.) 
 This type of bug can be sufficiently hard to find and fix that I prefer almost all variables to be signed.
 
 ### Why not smaller types?
