@@ -66,3 +66,113 @@ sum(short, short):
 following the 32-bit addition `adds`, in order to truncate the result to 16 bits. 
 
 Of course, the smaller types are invaluable when RAM is limited, in long arrays or audio buffers.
+
+
+## (Pseudo-) random numbers
+
+### Generation
+The pseudo-random numbers required for musical purposes do not usually need to be of particularly high statistical quality, but the generator does need to be fast, so that it imposes minimal computational load even if random numbers are generated every audio sample.
+
+I have favoured writing custom random number generators rather than using the C library function `rand()` (from `<stdlib.h>`) or the C++11 generators in `<random>`. This is firstly because the library generators are typically higher quality (and therefore slower) than is necessary, and secondly because details such as the worst-case (as opposed to average) execution time are not clear.
+
+Two fast algorithms on the RP2040 are a 32-bit linear congruential generator:
+```c++
+uint32_t lcg_u32()
+{
+	static uint32_t lcg_seed = 1;
+	lcg_seed = 1664525 * lcg_seed + 1013904223;
+	return lcg_seed;
+}
+```
+and 32-bit xorshift:
+```c++
+uint32_t xorshift32()
+{
+	static uint32_t x = 556381194;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	return x;
+}
+```
+These are of similar speed, about 95ns per call (at 200MHz clock). By comparison, the C library `rand()` and C++ library `std::minstd_rand` both of take around 300ns, and the time available for one call of `ProcessSample()` is around 20,000ns.
+
+I have used variations of `lcg_u32` in Utility Pair and Reverb+, but this algorithm suffers from the problem that the low bits are not very random.
+Specifically, the least-significant bit of successive `lgc_u32` calls alternates between `0` and `1`, and the maximum period of each successive bit is only twice that than the last. This can be seen in the binary output of the first 16 calls to `lcg_u32`, where the last, penultimate and antepenultimate bits repeat the patterns `01`, `0110`, and `10110100` (paradiddle!), respectively:
+```
+00111100100010000101100101101100
+01011110100010001000010111011011
+10000001000101100000000101111110
+10110100011100110011101011000101
+00001100111100000110110101100000
+01011110100110001100000100111111
+11000110010101101101110110010010
+10001110011000100101111111001001
+00000100001110001110011010010100
+10100011101001011010000011100011
+01000000000111011001000011100110
+01101100001000001111001100001101
+10010111001101110111100100001000
+11010110010000010100100011000111
+00111100001011011110111101111010
+11111011000110001011100010010001
+```
+More significant bits have much better random properties. To generate a 12-bit random number, using the most significant 12 bits (with `lcg_u32() >> 20`) is therefore much more random than using the least significant bits (with `lcg_u32 ( )&0xFFF`).
+
+The `xorshift32` function doesn't suffer from a comparable problem, though as a very simple generator it still fails more sophisticated statistical tests.
+
+`lcg_u32()` is a *full-period* generator, meaning that successive calls will generate all $2^{32}$ values that can be stored in a 32-bit integer, after which the sequence of values repeats. A quirk of `xorshift32` is that it will never generate the value zero, and so has period $2^{32}-1$. In either case, the period (over 4 billion) is likely to be sufficient in a musical context.
+
+Either generator can generate signed random numbers simply by changing the return type to `int32_t`.
+
+### Seeding
+In the examples above, the initial *seed* for the random number generation is fixed and arbitrarily chosen.
+On the Workshop System, it may often make sense to seed the generator either from 32 bits of the unique flash card identifier (`UniqueCardID()` in ComputerCard), or from a truely random number, which might be obtained from low-significance bits obtained from the ADC (e.g. knob/CV/audio inputs). In either case, the `static` variable definition in the functions above must be moved outside the generation function.
+
+## Speed of mathematical operations
+
+It's difficult to benchmark operations in isolation because their speed depends on the context of the surrounding code. The timings here, all at 200MHz, are therefore very approximate.
+
+- On the RP2040, 32-bit `+`, `-`, `*`, bitshifts (`<<`, `>>`) and bitwise operators (`|`, `&`, `^`) are fast single-cycle instructions (though loading operands may well take several more cycles). A single cycle at 200MHz is 5ns.
+- 32-bit division and modulus `/` and `%` are handled by an 8-cycle hardware divider in the RP2040. With some additional functional call overhead, these take ~120ns. In principle, functions in the Pico SDK `hardware_divider` header might speed this up.
+- For 64-bit integers, `+` and `-` take ~50ns, `*` takes ~175ns and `/` and `%` take ~250ns.
+- Single-precision floating-point operations (`+`, `-`, `*`, `/`) are of the order 400ns. 
+
+The executive summary is: wherever performance matters, stick with 32-bit integer `+`, `-`, `*`, bitshifts and bitwise operators, as far as possible.
+
+### Operations vs loads/stores
+As noted above, the time taken to load operands into registers may itself take several cycles. The two random number generation algorithms above make for an interesting comparison.
+
+The linear congruential generator `lcg_u32` has only two integer operations, `*` and `+`, each done in a single cycle with `muls` and `add` instructions respectively. But the expression requires two integer constants, each requiring a two-cycle load instruction `ldr`. The result is a 14-cycle execution, of which only 2 cycles are the underlying mathematical operations.
+```asm
+100002d4 <_Z7lcg_u32v>:
+100002d4:	4b04      	ldr	r3, [pc, #16]	@ (100002e8 <_Z7lcg_u32v+0x14>)
+100002d6:	4805      	ldr	r0, [pc, #20]	@ (100002ec <_Z7lcg_u32v+0x18>)
+100002d8:	681a      	ldr	r2, [r3, #0]
+100002da:	4350      	muls	r0, r2
+100002dc:	4a04      	ldr	r2, [pc, #16]	@ (100002f0 <_Z7lcg_u32v+0x1c>)
+100002de:	4694      	mov	ip, r2
+100002e0:	4460      	add	r0, ip
+100002e2:	6018      	str	r0, [r3, #0]
+100002e4:	4770      	bx	lr
+100002e6:	46c0      	nop			@ (mov r8, r8)
+100002e8:	20000f5c 	.word	0x20000f5c
+100002ec:	0019660d 	.word	0x0019660d
+100002f0:	3c6ef35f 	.word	0x3c6ef35f
+```
+By contrast, `xorshift32` has six operations - three XOR and three bitshifts, executed with single-cycle `eors` and `lsls`, but requires only the load and store of the `static` state variable (which is also required by `lcg_u32`). This executes in 12 cycles, marginally quicker than `lcg_u32`.
+```asm
+100002f4 <_Z10xorshift32v>:
+100002f4:	4904      	ldr	r1, [pc, #16]	@ (10000308 <_Z10xorshift32v+0x14>)
+100002f6:	680b      	ldr	r3, [r1, #0]
+100002f8:	035a      	lsls	r2, r3, #13
+100002fa:	405a      	eors	r2, r3
+100002fc:	0c53      	lsrs	r3, r2, #17
+100002fe:	4053      	eors	r3, r2
+10000300:	0158      	lsls	r0, r3, #5
+10000302:	4058      	eors	r0, r3
+10000304:	6008      	str	r0, [r1, #0]
+10000306:	4770      	bx	lr
+10000308:	20000f58 	.word	0x20000f58
+```
+Such timings will change if the function calls are inlined. In particular, successive calls to `lcg_u32` can be made much more quickly if the function is inlined and the constants are retained in registers between successive calls.
