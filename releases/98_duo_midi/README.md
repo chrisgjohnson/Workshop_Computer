@@ -10,7 +10,9 @@ The version of blackbird included in the UF2 (version 1.1M) is technically unrel
 
 ## What it does
 
-- Receives MIDI note, velocity, pitch bend, and CC (mod wheel).
+- Receives MIDI note, velocity, pitch bend, and mod-wheel (receives on all channels)
+- DUO mode: Does round-robin style voice allocation (voices are distributed regardless of MIDI channel)
+- MONO mode: Outputs incoming midi to both voices
 - Outputs **two pitches** (duophonic or mirrored mono).
 - Outputs **two ASR envelopes** (at the audio outputs).
 - Outputs **two triggers / gates** on voice assignment.
