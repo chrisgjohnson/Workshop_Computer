@@ -20,6 +20,8 @@ class WT : public ComputerCard
   PolyCone polycone;
   PolyICO polyico;
   YinYangCalligraphy yinyang_c;
+  RibbonWC ribbon;
+  OutlineWC outline;
 
   enum BANK
   {
@@ -36,10 +38,10 @@ class WT : public ComputerCard
   // Array of oscillators for each bank
   Oscillator *bankFunc[1] = {&yinyang};
   Oscillator *bankMesh[3] = {&polycube, &polycone, &polyico};
-  Oscillator *bankWT[1] = {&yinyang_c};
+  Oscillator *bankWT[3] = {&yinyang_c, &ribbon, &outline};
 
   Oscillator **banks[3] = {bankFunc, bankMesh, bankWT};
-  uint8_t bankSizes[3] = {1, 3, 1};
+  uint8_t bankSizes[3] = {1, 3, 3};
 
   int32_t mod1_off = 0;
   int32_t mod2_off = 0;
