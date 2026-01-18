@@ -8,7 +8,7 @@ Use with all kinds of effects and make cool oscilloscope music with cohesive vis
 
 ## Overview
 
-There are currently three banks of oscillator built with different models.
+There are currently three banks of oscillator built with different models. A-1,B-3,C-3, a total of 7 oscillators.
 
 - Bank A - math defiend oscillator (the Yin/Yang symbol above is an example)
 - Bank B - 3d polygon oscillator, project 3d polygon to 2d plane
@@ -19,7 +19,7 @@ Functional but still work in progress. More custom shapes are welcome!
 
 Find the detail, raise issue or make contribution on the complete repo [Trace_workshop_Computer](https://github.com/indiepaleale/Trace-Workshop-Computer)
 
-\*\* I'm fairly new to C++, so any suggestion or comment are welcome too!
+\*\* I'm fairly new to C++, so any suggestion or comment to better code are welcome too!
 
 ## Controls and I/O
 
