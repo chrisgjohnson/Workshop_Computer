@@ -18,9 +18,9 @@ typedef struct {
     uint32_t period_samples;      // Period in ProcessSample-rate samples
     uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
     float period_error;           // Accumulated fractional sample error for precision
-} timer_t;
+} bb_timer_t;
 
-static timer_t* timers = NULL;
+static bb_timer_t* timers = NULL;
 static int max_timers = 0;
 volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 static spin_lock_t* timers_lock = NULL;
@@ -35,7 +35,7 @@ void Timer_Init(int num_timers) {
     if (timers) {
         free(timers);
     }
-    timers = malloc(sizeof(timer_t) * max_timers);
+    timers = malloc(sizeof(bb_timer_t) * max_timers);
     timers_lock = spin_lock_instance(7); // Dedicated lock for timer state
     
     for (int i = 0; i < max_timers; i++) {
