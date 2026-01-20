@@ -30,6 +30,7 @@
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0 | C++ (ComputerCard) | @kjnilsson |  |  | Released |
 | 53_glitter | Granular Looping Sampler | 0.1.0 | Pico SDK 2.1.1 | Steve Jones |  |  | Beta Test |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.0 | Pico SDK | Dune Desormeaux |  |  | Ready |
+| 69_trace | Oscillograph stereo oscillator | 0.1 | C++ (ComputerCard) | Ruiyang Wang |  |  | Functional but WIP |
 | 77_Placeholder | Reserved for secret project | 0.0 | None | None |  |  | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1 | C++ (ComputerCard) | Chris Johnson |  |  | Proof of concept |
 | 88_Blank | Reserved for blank 88 cards | 0 | None | Tom Whitwell |  |  | None |
