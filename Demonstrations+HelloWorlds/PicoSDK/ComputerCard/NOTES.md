@@ -1,7 +1,7 @@
 # ComputerCard Programming notes
 
 
-## Integer types
+# Integer types
 
 Because integer types are so much faster than (software-emulated) floating-point on the RP2040, most variables in a ComputerCard program will be integers.
 
@@ -68,7 +68,7 @@ following the 32-bit addition `adds`, in order to truncate the result to 16 bits
 Of course, the smaller types are invaluable when RAM is limited, in long arrays or audio buffers.
 
 
-## (Pseudo-) random numbers
+# (Pseudo-) random numbers
 
 ### Generation
 The pseudo-random numbers required for musical purposes do not usually need to be of particularly high statistical quality, but the generator does need to be fast, so that it imposes minimal computational load even if random numbers are generated every audio sample.
@@ -129,7 +129,7 @@ Either generator can generate signed random numbers simply by changing the retur
 In the examples above, the initial *seed* for the random number generation is fixed and arbitrarily chosen.
 On the Workshop System, it may often make sense to seed the generator either from 32 bits of the unique flash card identifier (`UniqueCardID()` in ComputerCard), or from a truely random number, which might be obtained from low-significance bits obtained from the ADC (e.g. knob/CV/audio inputs). In either case, the `static` variable definition in the functions above must be moved outside the generation function.
 
-## Speed of mathematical operations
+# Speed of mathematical operations
 
 It's difficult to benchmark operations in isolation because their speed depends on the context of the surrounding code. The timings here, all at 200MHz, are therefore very approximate.
 
@@ -175,4 +175,13 @@ By contrast, `xorshift32` has six operations - three XOR and three bitshifts, ex
 10000306:	4770      	bx	lr
 10000308:	20000f58 	.word	0x20000f58
 ```
-Such timings will change if the function calls are inlined. In particular, successive calls to `lcg_u32` can be made much more quickly if the function is inlined and the constants are retained in registers between successive calls.
+Such timings will change if the function calls are inlined. In particular, successive calls to the linear congruential generator `lcg_u32` can be made much more quickly if the function is inlined and the constants are retained in registers between successive calls. That could be useful for, for example, rapidly filling an audio buffer with white noise. 
+
+
+# Euclidean rhythms and sigma-delta modulation
+
+Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
+
+
+
+
