@@ -127,7 +127,9 @@ Either generator can generate signed random numbers simply by changing the retur
 
 ### Seeding
 In the examples above, the initial *seed* for the random number generation is fixed and arbitrarily chosen.
-On the Workshop System, it may often make sense to seed the generator either from 32 bits of the unique flash card identifier (`UniqueCardID()` in ComputerCard), or from a truely random number, which might be obtained from low-significance bits obtained from the ADC (e.g. knob/CV/audio inputs). In either case, the `static` variable definition in the functions above must be moved outside the generation function.
+On the Workshop System, it may often make sense to seed the generator either from 32 bits of the unique flash card identifier (`UniqueCardID()` in ComputerCard), or from a sources of true random 'entropy'. (In either case, the `static` variable definition in the functions above must be moved outside the generation function.)
+
+The Pico SDK provides random number generation functions through the [`pico_rand`](https://www.raspberrypi.com/documentation/pico-sdk/high_level.html#group_pico_rand) header. These are too slow for most applications in ComputerCard, but are seeded with random entropy sourced from various parts of the RP2040 hardware. A call to one of the functions in this header (e.g. `get_rand_32`) is a good source of seed for one of the faster pseudo-random generators above, but should be called outside of the `ProcessSample` function as generating the random entropy takes ~1ms, much longer than the ~20us allowed by `ProcessSample`.
 
 # Speed of mathematical operations
 
