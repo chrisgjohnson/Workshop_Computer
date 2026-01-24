@@ -184,6 +184,43 @@ Such timings will change if the function calls are inlined. In particular, succe
 
 Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
 
+# Running code from RAM
+
+By default, the RP2040 runs program code directly from the flash chip on the program card (so-called 'execute in-place', or XIP), but can also run code stored in its internal RAM. Reading from the flash chip is more than an order of magnitude slower than reading from RAM, and this has a corresponding impact on the speed at which code stored in flash can runs.
+
+The situation is mitigated by a caching: data read from the flash card is stored in 16kB of dedicated RAM, which allows frequently-used code to be accessed at RAM speeds. For many small ComputerCard programs, this cache is sufficient to store all or nearly all the code executed every sample, and execution speed is nearly that of a program stored entirely in RAM. For larger programs, which don't fit into the cache, or those with particularly tight timing requirements, it is necessary to explicitly copy the code to RAM and run it from there.
+
+
+The easiest option is to copy *all* program code to RAM before it is executed. In the RPi Pico SDK, this can be done by addding
+`pico_set_binary_type(${PROJECT_NAME} copy_to_ram)`
+to the `CMakeLists.txt` file.
+Obviously this is only possible if the total code size, plus any RAM used to store data during the course of the program, is smaller than the ~256kB of available RAM. The linker will produce an error if this is not the case.
+
+<details>
+	<summary>Determining the size of the program</summary>
+	The amount of data written to the flash program card is the size of the `.bin` file in the CMake `build/` directory, or about half the size of the `.uf2`. This almost certainly includes some constant data as well as program code. Even if program code is copied to RAM, the constant data (stored in the `rodata` section) is not. This constant data can be a significant part of the program size if, for example, there are large precalculated lookup tables in the code.
+</details>
+	
+Another option, which is used in ComputerCard itself, is to decorate functions and class methods that should be stored in RAM with ` __time_critical_func`, e.g.
+```c++
+int32_t MyFunction(int32_v a) {...}
+```
+becomes
+```c++
+int32_t __time_critical_func(MyFunction)(int32_v a) {...}
+```
+
+There is a small overhead in jumping between code executed in RAM and in flash, so my approach has been to liberally apply `__time_critical_func` to all frequently-run code. For example, in ComputerCard, `ProcessSample` and all the methods likely to be called within it (`KnobVal`, `CVOut1`, etc.) are all specified as running from RAM. This process may require going into any and all library code called from `ProcessSample` to apply `__time_critical_func` to methods there.
+
+N.B. `__time_critical_func` currently does the same as `__not_in_flash_func` (which is used in ComputerCard), but the SDK indicates that `__time_critical_func` is preferred and may have further optimisations in future.
+
+### Checking where code will run from
+The `.dis` disassembly files generated in the CMake `build/` directory show each assembly language instruction in the program and the address in memory at which it is stored. Addresses are eight-digit hexadecimal values. Those starting `1xxxxxxx` correspond to data stored in flash, and those starting `2xxxxxxx` correspond to data stored in RAM
+
+### Warming up the cache
+Where cache or RAM size limits force some code to be run directly from flash, the first few passes through a loop can be slower than subsequent passes, where the XIP cache is better filled. In the Radio Music source code, certain CPU-intensive parts of the algorithm are turned off for the first few samples, so that the initial, slower, code execution does not cause a buffer underflow.
+
+# Writing to flash
 
 
 
