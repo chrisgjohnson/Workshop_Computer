@@ -90,3 +90,8 @@ All settings (Sample Rate, Channel Count, CV/Pulse Modes) can be adjusted using 
 
 3. **Flash**:
    Hold the BOOTSEL button on your Pico/Computer board, plug it in, and copy the generated `usb_bridge.uf2` to the drive.
+
+
+Created for the Music Thing Modular Workshop System by Vincent Maurer (https://github.com/vincent-maurer/) with assistance from Google Gemini.
+
+Thank you to everyone on the Workshop System Discord server, that helped testing and especially to Chris Johnson (https://github.com/chrisgjohnson) for the initial USB-Audio project, the ComputerCard library and the great support.
