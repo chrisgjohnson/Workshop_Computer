@@ -179,6 +179,31 @@ By contrast, `xorshift32` has six operations - three XOR and three bitshifts, ex
 ```
 Such timings will change if the function calls are inlined. In particular, successive calls to the linear congruential generator `lcg_u32` can be made much more quickly if the function is inlined and the constants are retained in registers between successive calls. That could be useful for, for example, rapidly filling an audio buffer with white noise. 
 
+### Fast multiplication
+The `muls` instruction multiplies two (32-bit) registers and returns the *least significant* 32 bits of the result. As a result, from a single `muls`, we can only get the most significant bits of a multiplication by ensuring that the result does is no greater than can be stored than 32 bits (or 31 bits, for signed integers). This allows combinations such as 16×16-bit multiply (unsigned), or 15×15-bit (signed), or some unequal 8×24-bit (unsigned). This is usually acceptable on the workshop system, where most audio and CV values are 12-bit.
+
+Within C/C++, we can extract the *most* significant 32 bits of a 32×32-bit multiply by putting the two values to be multiplied `int64_t` variables, and then selecting the upper 32 bits of the result. This requires a full 64-bit multiply and is fairly slow. We can do a bit better with code like:
+```c++
+// Approximate (a*b)>>31
+int32_t mul32x32(uint32_t a, int32_t b)
+{
+	int32_t al = a & 0xFFFF;
+	int32_t bl = b & 0xFFFF;
+	int32_t ah = a >> 16;
+	int32_t bh = b >> 16;
+	int32_t ahbl = ah*bl;
+	int32_t albh = al*bh;
+	int32_t ahbh = ah*bh;
+
+	return (ahbh << 1) + (albh >> 15) + (ahbl >> 15);
+}
+```
+which constructs the desired most significant bits of the multiplication. This implementation is approximate in that the carry bit resulting from `al*bl` is ignored, so may have an error in the least significant bit of those returned.
+
+#### The interpolator
+The RP2040 contains a two specialised *interpolator* units per CPU core, detailed in the RP2040 datasheet section 2.3.1.6, which perform a series of mathematical operations in one clock cycle. When in *blend mode*, these have the capability of performing an 8×32-bit multiply and returning the *most* significant 32-bits of the result.
+
+
 
 # Euclidean rhythms and sigma-delta modulation
 
