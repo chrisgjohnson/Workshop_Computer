@@ -1,8 +1,6 @@
 # ComputerCard programming tips
 This document is a collection of short tips for ComputerCard development. It's split into two sections, the first about squeezing as much performance as possible from the RP2040 microcontroller in the Workshop System Computer, and the second about algorithms that are handy for audio development on this platform.
 
-The focus is on C/C++ development with the RPi Pico SDK and ComputerCard.
-
 # Programming and optimisation
 ## Clock speed.
 By default the RP2040 cores run at 125MHz, with an maximum supported speed of 200MHz (originally 133MHz at release). To run at the full 200MHz, call
@@ -31,9 +29,9 @@ There are two convenient ways to look at the assembly language instructions that
 Secondly, the online tool [Compiler Explorer](https://godbolt.org/) is helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, use the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK or the specifics of the RP2040, so is best for looking at snippets of user code.
 
 ## Memory
-Though the memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2), this (blog post)[https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/] is more readable, and has a useful warning about the stack when using two cores.
+Though the memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2), this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/) is more readable, and has a useful warning about the stack when using two cores.
 
-I haven't figured out how the heap allocator actually works, but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a custom allocator.
+I haven't figured out exactly how the default heap allocator works, but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a custom allocator.
 
 ## Running code from RAM
 
@@ -143,13 +141,26 @@ It's difficult to benchmark operations in isolation because their speed depends 
 
 On the RP2040, 32-bit `+`, `-`, `*`, bitshifts (`<<`, `>>`) and bitwise operators (`|`, `&`, `^`) are fast single-cycle instructions (though loading operands may well take several more cycles). A single cycle at 200MHz is 5ns.
 
-All other operations are emulated by functions, which have some function call overhead.
+All other operations are emulated by functions, which have some function call overhead (they are not, as far as I can tell, inlined).
 - 32-bit division and modulus `/` and `%` are handled by an 8-cycle hardware divider in the RP2040, and take ~120ns. In principle, functions in the Pico SDK `hardware_divider` header, with reduced function call overhead might speed this up.
 - For 64-bit integers, `+` and `-` take ~50ns, `*` takes ~175ns and `/` and `%` take ~250ns.
 - Single-precision floating-point operations (`+`, `-`, `*`, `/`) are of the order 400ns. 
 
 The executive summary is: wherever performance really matters, stick with 32-bit integer `+`, `-`, `*`, bitshifts and bitwise operators, as far as possible.
 
+### Division using right shifts
+Divisions by powers of two can be calculated by right shifts (`x >> n` divides `x` by $2^n$). For unsigned integers, right shift and divide by power of two are identical, but for signed integers the rounding behaviour differs for negative numbers. Specifically, divide `/` always rounds towards zero, whereas right shift `>>` rounds towards negative infinity.
+
+
+Where approximate results are acceptable, divisions by non-powers of two (including non-integer divisors) can be approximated by a combination of a multiply and bitshift. For example,
+```
+int32_t y = x / 5;
+```
+could sometimes be approximated by
+```
+int32_t y = (x * 3277) >> 14;
+```
+since $3277/2^{14} = 0.20001\ldots \approx \tfrac{1}{5}$. This of course limits `x` to values for which `x * 3277` does not overflow.
 
 ### Operations vs loads/stores
 As noted above, the time taken to load operands into registers may itself take several cycles. The two random number generation algorithms discussed below make for an interesting comparison.
