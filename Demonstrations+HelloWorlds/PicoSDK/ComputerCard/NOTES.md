@@ -2,7 +2,7 @@
 This document is a collection of short tips for ComputerCard development. It's split into two sections, the first about squeezing as much performance as possible from the RP2040 microcontroller in the Workshop System Computer, and the second about algorithms that are handy for audio development on this platform.
 
 # Programming and optimisation
-## Clock speed.
+## Clock speed
 By default the RP2040 cores run at 125MHz, with an maximum supported speed of 200MHz (originally 133MHz at release). To run at the full 200MHz, call
 ```
 vreg_set_voltage(VREG_VOLTAGE_1_15);
@@ -42,7 +42,7 @@ The situation is mitigated by a caching: data read from the flash card is stored
 The easiest option is to copy *all* program code to RAM before it is executed. In the RPi Pico SDK, this can be done by addding
 `pico_set_binary_type(${PROJECT_NAME} copy_to_ram)`
 to the `CMakeLists.txt` file.
-Obviously this is only possible if the total code size, plus any RAM used to store data during the course of the program, is smaller than the ~256kB of available RAM. The linker will produce an error if this is not the case.
+Obviously this is only possible if the total code (and constant data) size, plus any RAM used to store data during the course of the program, is smaller than the ~256kB of available RAM. The linker will produce an error if this is not the case.
 
 <details>
 	<summary>Determining the size of the program</summary>
@@ -144,23 +144,9 @@ On the RP2040, 32-bit `+`, `-`, `*`, bitshifts (`<<`, `>>`) and bitwise operator
 All other operations are emulated by functions, which have some function call overhead (they are not, as far as I can tell, inlined).
 - 32-bit division and modulus `/` and `%` are handled by an 8-cycle hardware divider in the RP2040, and take ~120ns. In principle, functions in the Pico SDK `hardware_divider` header, with reduced function call overhead might speed this up.
 - For 64-bit integers, `+` and `-` take ~50ns, `*` takes ~175ns and `/` and `%` take ~250ns.
-- Single-precision floating-point operations (`+`, `-`, `*`, `/`) are of the order 400ns. 
+- Single-precision floating-point operations (`+`, `-`, `*`, `/`) are of the order 360ns, with (single precision) floating point functions like `sinf` and `expf` taking nearly 3µs. Timings for these are given in the RP2040 datasheet §2.8.3.2.2.
 
 The executive summary is: wherever performance really matters, stick with 32-bit integer `+`, `-`, `*`, bitshifts and bitwise operators, as far as possible.
-
-### Division using right shifts
-Divisions by powers of two can be calculated by right shifts (`x >> n` divides `x` by $2^n$). For unsigned integers, right shift and divide by power of two are identical, but for signed integers the rounding behaviour differs for negative numbers. Specifically, divide `/` always rounds towards zero, whereas right shift `>>` rounds towards negative infinity.
-
-
-Where approximate results are acceptable, divisions by non-powers of two (including non-integer divisors) can be approximated by a combination of a multiply and bitshift. For example,
-```
-int32_t y = x / 5;
-```
-could sometimes be approximated by
-```
-int32_t y = (x * 3277) >> 14;
-```
-since $3277/2^{14} = 0.20001\ldots \approx \tfrac{1}{5}$. This of course limits `x` to values for which `x * 3277` does not overflow.
 
 ### Operations vs loads/stores
 As noted above, the time taken to load operands into registers may itself take several cycles. The two random number generation algorithms discussed below make for an interesting comparison.
@@ -199,37 +185,79 @@ By contrast, `xorshift32` has six operations - three XOR and three bitshifts, ex
 ```
 Such timings will change if the function calls are inlined. In particular, successive calls to the linear congruential generator `lcg_u32` can be made much more quickly if the function is inlined and the constants are retained in registers between successive calls. That could be useful for, for example, rapidly filling an audio buffer with white noise. 
 
+### Division using right shifts
+Divisions by powers of two can be calculated by right shifts (`x >> n` divides `x` by $2^n$). For unsigned integers, right shift and divide by power of two are identical, but for signed integers the rounding behaviour differs for negative numbers. Specifically, divide `/` always rounds towards zero, whereas right shift `>>` rounds towards negative infinity.
+
+
+Where approximate results are acceptable, divisions by non-powers of two (including non-integer divisors) can be approximated by a combination of a multiply and bitshift. For example,
+```c++
+int32_t y = x / 5;
+```
+could sometimes be approximated by
+```c++
+int32_t y = (x * 3277) >> 14;
+```
+since $3277/2^{14} = 0.20001\ldots \approx \tfrac{1}{5}$. This of course limits `x` to values for which `x * 3277` does not overflow.
+
+
 ### Fast multiplication
 The `muls` instruction multiplies two (32-bit) registers and returns the *least significant* 32 bits of the result. As a result, from a single `muls`, we can only get the most significant bits of a multiplication by ensuring that the result does is no greater than can be stored than 32 bits (or 31 bits, for signed integers). This allows combinations such as 16×16-bit multiply (unsigned), or 15×15-bit (signed), or some unequal 8×24-bit (unsigned). This is usually acceptable on the workshop system, where most audio and CV values are 12-bit.
 
-Within C/C++, we can extract the *most* significant 32 bits of a 32×32-bit multiply by putting the two values to be multiplied `int64_t` variables, and then selecting the upper 32 bits of the result. This requires a full 64-bit multiply and is fairly slow. We can do a little bit better with code like:
+Within C/C++, we can extract the *most* significant 32 bits of a 32×32-bit multiply by putting the two values to be multiplied `int64_t` variables, and then selecting the upper 32 bits of the result. This requires a full 64-bit multiply and is fairly slow (~175ns). But if we don't need this full 64-bit multiply, we can roll our own, for example this routine returning the uppermost 32-bits of a signed 32×16-bit multiply:
 ```c++
-// Approximate (a*b)>>31
-int32_t mul32x32(uint32_t a, uint32_t b)
+int32_t mul_s32_s16(int32_t a, int32_t b) // b could as well be an int16_t here
 {
-	uint32_t al = a & 0xFFFF;
-	uint32_t bl = b & 0xFFFF;
-	uint32_t ah = a >> 16;
-	uint32_t bh = b >> 16;
-	uint32_t ahbl = ah*bl;
-	uint32_t albh = al*bh;
-	uint32_t ahbh = ah*bh;
-
-	return ahbh + (albh >> 16) + (ahbl >> 16);
+	int32_t al = a & 0xFFFF;
+	int32_t ah = a >> 16;
+	return (ah * b) + ((al * b) >> 16);
 }
 ```
-which constructs the desired most significant bits of the multiplication. This implementation is approximate in that the carry bit resulting from `al*bl` is ignored, so may have an error in the least significant bit of those returned.
+which compiles to only 8 instructions (40ns), and fewer if inlined.
+```asm
+mul_s32_s16(long, long):
+        lsls    r3, r0, #16
+        lsrs    r3, r3, #16
+        muls    r3, r1
+        asrs    r0, r0, #16
+        muls    r0, r1
+        asrs    r3, r3, #16
+        adds    r0, r3, r0
+        bx      lr
+```
 
 #### The interpolator
 The RP2040 contains a two specialised interpolator units per CPU core, detailed in the RP2040 datasheet section 2.3.1.6, which perform a series of mathematical operations in one clock cycle. When in *blend mode*, these have the capability of performing an 8×32-bit multiply and returning the most significant 32-bits of the result.
 
 
 ## Writing to flash
-The RP2040 can write data to the flash program card as well as read it. Writing to flash is used primarily for saving small amounts of data as a settings file that persists across reboots, but can also save larger amounts of data, e.g. recording audio data onto flash.
+The RP2040 can write data to the flash program card as well as read it. Writing to flash is used primarily for saving small amounts of data as a settings file that persists across reboots, but can also save larger amounts of data, e.g. streaming audio data onto flash. 
 
-Because the RP2040 is almost always reading program data from flash, writing to flash requires some care. There are two main options:
-* Use Pico SDK functions in `"hardware/flash.h"` to halt the program while data is written to flash.
-* Run the entire program from RAM (using `pico_set_binary_type`, as detailed above), which allows the flash to be written to at any time.
+On the RP2040, the flash program card is divided into a heirarchy of 64kB *blocks*, which are divided into sixteen 4kB *sectors*, which in turn are divided into sixteen 256-byte *pages*. 
+
+There are two steps to writing data to flash memory: erasing and programming. These are performed by the functions `flash_range_erase` and `flash_range_program`, respectively, in the `hardware_flash` Pico SDK library.
+
+* Erasing is a slow process, which can only be performed on one or more entire (4096-byte) sectors at once. Erasing turns all bits in those sectors to a `1`. Erasing a single 4kB sector on a program card takes about 5ms (~80kB/s), but erasing all sixteen sectors in a block is proportionally faster, taking about 35ms (~180kB/s).
+* Programming is much faster than erasing, and is performed on one or more (256-byte) pages at once. Programming turns selected bits in those pages to `0`.
+
+
+### Managing flash reads and writes
+It is not possible to read data from flash while also erasing or programming it. Because the RP2040 is almost always reading program instructions from flash in order to execute them, writing to flash requires some care, to ensure these reads do not clash with the ongoing write. Such a clash will halt the RP2040.
+
+The `flash_range_erase` and `flash_range_program` functions call lower-level flash writing routines stored in RP2040's built-in boot ROM, meaning that they do themselves cause any flash reads. However, there are two ways in which flash reads and subsequent crashes could occur. Firstly, if interrupts are enabled, it's possible for an interrupt handler stored in flash to be requested during a flash write. Secondly, if both cores are in use, then the core that is not running `flash_range_erase`/`flash_range_program` may well be reading instructions and other data from flash.
+
+The simplest way to avoid these problems is to run the entire program from RAM (using `pico_set_binary_type(... copy_to_ram)`, as detailed above), which allows the flash to be written to at any time. (The `copy_to_ram` binary option copies both code and read only variables, such as constant arrays of predefined data, to RAM, so reading from such arrays does not result in flash reads.)
+
+Many programs, though, are too big to fit in the RP2040's RAM. In that case, to avoid flash reads:
+* code that uses interrupts must call `save_and_disable_interrupts` before either flash writing function is called, and `restore_interrupts` after the write has finished. These are in the Pico SDK `hardware_sync` library.
+* code that uses multiple cores must prepare the non-flash-writing core to be paused, using `multicore_lockout_victim_init`, then pause and restore this core either side of flash writing functions, with `multicore_lockout_start_blocking` and `multicore_lockout_end_blocking`, all from the `pico_multicore` Pico SDK library.
+
+When using ComputerCard, the writes to flash will almost always be made on the core that is *not* executing `ProcessSample()`. If the entire code is copied to RAM, this allows `ProcessSample()` to continue executing without interruption and audio processing continues during the flash write. But if for whatever reason the code cannot be copied to RAM, the audio will glitch for at least 5ms as flash is erased. This happens, for example, in Reverb+ when settings are saved to the program card. 
+
+### Flash lifespan and wear levelling
+Flash memory degrades very slowly as each time it is erased. The memory chips on the Workshop System program cards are rated for at least 100,000 erase/program cycles per sector. For any purpose where the user is manually taking an action (clicking a button, etc.) to save data to flash, this is not likely to be an issue. But in principle, a program that repeated erased and wrote to a single sector of flash, as fast as possible, could reach this in about ten minutes.
+
+When recording audio to flash, the data rate might be as high as 48kHz × 12-bit × 2 channels = 144kB/s. If this audio is recorded in a loop across (say) 1.5MB of a 2MB program card, the loop length will be 1.5MB / 144kB/s = 11s. This part of the program card will then reach its rated life after 11s × 100000 = ~300 hours of continuous recording. For comparison, that's exactly the quoted tape life of a Roland RE-201 Space Echo. The rated life of a 16MB program card (with nearly 2-minute loops) will be ~10× longer. Even if the desired loop length is much shorter than this, it makes sense to continue to record audio onto across all of the free space on the card, to distribute the wear evenly. 
+
 
 # Algorithms
 ## (Pseudo-) random numbers
