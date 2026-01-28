@@ -13,7 +13,7 @@ at the start of `main()`, which requires the headers
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
 ```
-Overclocking a little beyond 200MHz is possible, but the Workshop System Computer seems less amenable to overclocking than an RPi Pico (possibly because the flash memory on program cards is further from the microcontroller). 
+Overclocking a little beyond 200MHz is possible, but the Workshop System Computer seems less amenable to overclocking than an RPi Pico - possibly because the flash memory on program cards is further from the microcontroller. 
 
 ## Assembly language
 For micro-optimisations it can be helpful to see what machine code instructions the C/C++ is compiling to. The Cortex M0+ cores in the RP2040 implement the ARMv6-M architecture, which has a fairly simple instruction set. The important information for understanding the architecture is in:
@@ -22,11 +22,11 @@ For micro-optimisations it can be helpful to see what machine code instructions 
 * [details of each instruction](https://developer.arm.com/documentation/ddi0419/c/Application-Level-Architecture/The-ARMv6-M-Instruction-Set) in the ARMv6-M manual
 * Function calling conventions in the [ARM 32-bit ABI](https://github.com/ARM-software/abi-aa/blob/2982a9f3b512a5bfdc9e3fea5d3b298f9165c36b/aapcs32/aapcs32.rst)
 
-A good beginners guide to the above is the book 'RP2040 Assembly Language Programming: ARM Cortex-M0+ on the Raspberry Pi Pico' by Stephen Smith.
+A beginners guide to the above is the book 'RP2040 Assembly Language Programming: ARM Cortex-M0+ on the Raspberry Pi Pico' by Stephen Smith.
 
-There are two convenient ways to look at the assembly language instructions that are produced by the C/C++ compiler. Firstly, alongside the usual compiled binary formats (`.uf2`, `.bin` etc) the RPi Pico SDK also outputs a disassembly file `.dis` in the `build/` directory, containing the full assembly language output of the program. This output contains all of the code that will be programmed to on the flash card. It's a particularly easy format what calls into the Pico SDK library (including 'hidden' ones such as the sofware floating point implementation) are actually doing.
+There are two convenient ways to look at the assembly language instructions that are produced by the C/C++ compiler. Firstly, alongside the usual compiled binary formats (`.uf2`, `.bin` etc) the RPi Pico SDK also outputs a disassembly file `.dis` in the `build/` directory, containing the full assembly language output of the program. This output contains all of the code that will be programmed to on the flash card, and so is a convenient way to see what calls into the Pico SDK library (including 'hidden' ones such as the sofware floating point implementation) are actually doing.
 
-Secondly, the online tool [Compiler Explorer](https://godbolt.org/) is helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, use the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK or the specifics of the RP2040, so is best for looking at snippets of user code.
+Secondly, the online tool [Compiler Explorer](https://godbolt.org/) is helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, use the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK or the specifics of the RP2040, so is best for looking at how snippets of user code compile to machine code.
 
 ## Memory
 Though the memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2), this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/) is more readable, and has a useful warning about the stack when using two cores.
@@ -225,7 +225,11 @@ The RP2040 contains a two specialised interpolator units per CPU core, detailed 
 
 
 ## Writing to flash
+The RP2040 can write data to the flash program card as well as read it. Writing to flash is used primarily for saving small amounts of data as a settings file that persists across reboots, but can also save larger amounts of data, e.g. recording audio data onto flash.
 
+Because the RP2040 is almost always reading program data from flash, writing to flash requires some care. There are two main options:
+* Use Pico SDK functions in `"hardware/flash.h"` to halt the program while data is written to flash.
+* Run the entire program from RAM (using `pico_set_binary_type`, as detailed above), which allows the flash to be written to at any time.
 
 # Algorithms
 ## (Pseudo-) random numbers
