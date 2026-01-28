@@ -1,5 +1,18 @@
-# ComputerCard Programming notes
+# ComputerCard programming notes
 
+
+# Assembly language
+The RP2040 has two ARM Cortex M0+ cores, implementing the ARMv6-M architecture. The important information for understanding these are in §2.4.3 of RP2040 datasheet and in ARM's online [instruction set summary and timings](https://developer.arm.com/documentation/ddi0484/c/Programmers-Model/Instruction-set-summary) and [details of each instruction](https://developer.arm.com/documentation/ddi0419/c/Application-Level-Architecture/The-ARMv6-M-Instruction-Set), in the M0+ and ARMv6-M manuals respectively.
+
+Alongside the usual binary formats (UF2, BIN etc) the RPi Pico SDK compiles also outputs a disassembly file `.dis` in the `build/` directory, containing the full assembly language output of the program. 
+This output is very helpful for understanding what the RP2040 is actually executing. In particular, it's easy to see which code is on the flash program card (address `10xxxxxx`) and which is in RAM (address `20xxxxxx`), and what calls into the Pico SDK library (including 'hidden' ones such as the sofware floating point implementation) are actually doing.
+
+The online tool (Compiler Explorer)[https://godbolt.org/] is also helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, the settings to use are the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK, so is best for looking at user (i.e. your) code.
+
+# Memory
+Though the memory map is outlined in the datasheet (§2.2), this (blog post)[https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/] is more readable, and has a useful warning about the stack when using two cores.
+
+I haven't figured out how the heap allocator actually works, but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. I would usually recommend structing programs to avoid repeated `malloc`/`free`, or using a custom allocator if this is necessary.
 
 # Integer types
 
@@ -135,12 +148,15 @@ The Pico SDK provides random number generation functions through the [`pico_rand
 
 It's difficult to benchmark operations in isolation because their speed depends on the context of the surrounding code. The timings here, all at 200MHz, are therefore very approximate.
 
-- On the RP2040, 32-bit `+`, `-`, `*`, bitshifts (`<<`, `>>`) and bitwise operators (`|`, `&`, `^`) are fast single-cycle instructions (though loading operands may well take several more cycles). A single cycle at 200MHz is 5ns.
-- 32-bit division and modulus `/` and `%` are handled by an 8-cycle hardware divider in the RP2040. With some additional functional call overhead, these take ~120ns. In principle, functions in the Pico SDK `hardware_divider` header might speed this up.
+On the RP2040, 32-bit `+`, `-`, `*`, bitshifts (`<<`, `>>`) and bitwise operators (`|`, `&`, `^`) are fast single-cycle instructions (though loading operands may well take several more cycles). A single cycle at 200MHz is 5ns.
+
+All other operations are emulated by functions, which have some function call overhead.
+- 32-bit division and modulus `/` and `%` are handled by an 8-cycle hardware divider in the RP2040, and take ~120ns. In principle, functions in the Pico SDK `hardware_divider` header, with reduced function call overhead might speed this up.
 - For 64-bit integers, `+` and `-` take ~50ns, `*` takes ~175ns and `/` and `%` take ~250ns.
 - Single-precision floating-point operations (`+`, `-`, `*`, `/`) are of the order 400ns. 
 
-The executive summary is: wherever performance matters, stick with 32-bit integer `+`, `-`, `*`, bitshifts and bitwise operators, as far as possible.
+The executive summary is: wherever performance really matters, stick with 32-bit integer `+`, `-`, `*`, bitshifts and bitwise operators, as far as possible.
+
 
 ### Operations vs loads/stores
 As noted above, the time taken to load operands into registers may itself take several cycles. The two random number generation algorithms above make for an interesting comparison.
@@ -201,13 +217,8 @@ int32_t mul32x32(uint32_t a, int32_t b)
 which constructs the desired most significant bits of the multiplication. This implementation is approximate in that the carry bit resulting from `al*bl` is ignored, so may have an error in the least significant bit of those returned.
 
 #### The interpolator
-The RP2040 contains a two specialised *interpolator* units per CPU core, detailed in the RP2040 datasheet section 2.3.1.6, which perform a series of mathematical operations in one clock cycle. When in *blend mode*, these have the capability of performing an 8×32-bit multiply and returning the *most* significant 32-bits of the result.
+The RP2040 contains a two specialised interpolator units per CPU core, detailed in the RP2040 datasheet section 2.3.1.6, which perform a series of mathematical operations in one clock cycle. When in *blend mode*, these have the capability of performing an 8×32-bit multiply and returning the most significant 32-bits of the result.
 
-
-
-# Euclidean rhythms and sigma-delta modulation
-
-Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
 
 # Running code from RAM
 
@@ -247,5 +258,10 @@ Where cache or RAM size limits force some code to be run directly from flash, th
 
 # Writing to flash
 
+
+
+# Euclidean rhythms and sigma-delta modulation
+
+Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
 
 
