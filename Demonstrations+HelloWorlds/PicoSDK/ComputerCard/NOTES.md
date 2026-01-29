@@ -43,11 +43,6 @@ The easiest option is to copy *all* program code to RAM before it is executed. I
 `pico_set_binary_type(${PROJECT_NAME} copy_to_ram)`
 to the `CMakeLists.txt` file.
 Obviously this is only possible if the total code (and constant data) size, plus any RAM used to store data during the course of the program, is smaller than the ~256kB of available RAM. The linker will produce an error if this is not the case.
-
-<details>
-	<summary>Determining the size of the program</summary>
-	The amount of data written to the flash program card is the size of the `.bin` file in the CMake `build/` directory, or about half the size of the `.uf2`. This almost certainly includes some constant data as well as program code. Even if program code is copied to RAM, the constant data (stored in the `rodata` section) is not. This constant data can be a significant part of the program size if, for example, there are large precalculated lookup tables in the code.
-</details>
 	
 Another option, which is used in ComputerCard itself, is to decorate functions and class methods that should be stored in RAM with ` __time_critical_func`, e.g.
 ```c++
