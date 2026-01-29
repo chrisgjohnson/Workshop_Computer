@@ -326,4 +326,4 @@ The Pico SDK provides random number generation functions through the [`pico_rand
 
 Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
 
-
+## Antiderivative antialiasing
