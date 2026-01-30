@@ -46,10 +46,13 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
     var typeSel=document.getElementById('filter-type');
     var creatorSel=document.getElementById('filter-creator');
     var langSel=document.getElementById('filter-language');
-  var countEl=document.getElementById('cards-count');
+    var sortCheckbox = document.getElementById('sort-latest');
+    var countEl=document.getElementById('cards-count');
+    
     function normTypeKey(v){
       return String(v||'').toLowerCase().replace(/\s+/g,' ').replace(/[^a-z0-9\s]+/g,' ').replace(/\s+/g,' ').trim();
     }
+    
     function applyFilters(){
       var t=typeSel&&typeSel.value?normTypeKey(typeSel.value):'';
       var c=creatorSel&&creatorSel.value?creatorSel.value.toLowerCase():'';
@@ -69,8 +72,34 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
       });
       if(countEl) countEl.textContent=String(shown);
     }
+
+    // Sort Logic
+    var grid = document.querySelector('.grid');
+    if(grid) {
+      grid.querySelectorAll('.card').forEach(function(c,i){ c.setAttribute('data-idx', i); });
+    }
+    function applySort() {
+      if(!sortCheckbox || !grid) return;
+      var latest = sortCheckbox.checked;
+      var cards = Array.from(grid.children);
+      cards.sort(function(a,b){
+        if(!latest) {
+          return Number(a.getAttribute('data-idx')) - Number(b.getAttribute('data-idx'));
+        }
+        var da = a.getAttribute('data-date') || '';
+        var db = b.getAttribute('data-date') || '';
+        // Date Descending
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return db.localeCompare(da);
+      });
+      cards.forEach(function(c){ grid.appendChild(c); });
+    }
+
     function wire(sel){if(!sel) return; sel.addEventListener('change',applyFilters);} 
     wire(typeSel); wire(creatorSel); wire(langSel);
+    if(sortCheckbox) sortCheckbox.addEventListener('change', applySort);
     // Initialize count on load
     if(typeSel||creatorSel||langSel) applyFilters();
   })();</script>
