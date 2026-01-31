@@ -69,7 +69,8 @@ function releaseCard(rel) {
   const editorLink = (info.editor != '');
   const editor = info.editor;
   const date = info.date || '';
-  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}" data-date="${escapeAttr(date)}">
+  const searchText = normalizeSpaces(`${display.title} ${desc}`).toLowerCase();
+  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}" data-date="${escapeAttr(date)}" data-search="${escapeAttr(searchText)}">
 <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
@@ -216,6 +217,12 @@ async function build() {
 </article>
 <div class="filter-bar card" aria-label="Filter programs">
   <div class="card-body">
+    <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+      <div class="search-wrapper">
+        <input type="text" id="filter-search" placeholder="Search programs..." class="search-input" aria-label="Search programs">
+        <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+      </div>
+    </div>
     <div class="filter-row">
       <div class="filter-group">
         <label for="filter-type">Release type</label>
