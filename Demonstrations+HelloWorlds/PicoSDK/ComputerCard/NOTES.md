@@ -446,5 +446,10 @@ result = (fn(audio) + fn(lastAudio)) >> 1;
 That is, in both the linear regions of the half-rectifier function, the antialiasing does nothing (other than introduce the half-sample delay inherent in the method). This is reasonable becasue, in these linear regions, no extra frequencies are generated. But when the waveform crosses the nonlinearity at $x=0$, the antialiasing then takes effect.
 
 #### What does it sound like?
+With an LFO-modulated sine wave as input, first with, then without the antiderivative antialiasing. 
+In the spectrograms and audio, some aliasing can be seen and heard even with the antialiasing, but at a considerably lower volume than the naive algorithm.
+<img width="770" height="335" alt="aa_nonlin" src="https://github.com/user-attachments/assets/2dc5c531-9cdc-4ac0-985e-f63de6ba899a" />
+
+https://github.com/user-attachments/assets/dfa8cdb7-a61a-4de7-946e-699a70486ffc
 
 
