@@ -333,5 +333,117 @@ However, three common processes do generate frequencies greater than $f_N$ and s
 
 A brute force technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but is computationally expensive.
 Alternatively (or in conjunction with this), specific mathematical techniques can be used to reduce aliasing.
-One of these is antiderivative antialiasing, which has the advantages of being quite generally applicable (including to all three examples above), and relatively simple and efficient to implement on the RP2040.
+One of these is antiderivative antialiasing, which has the advantages of being quite generally applicable (including to all three examples above), and relatively simple and efficient to implement on the RP2040. The Utility Pair Wavefolder, Max/rectifier, and oscillators (VCO, Chords, Supersaw) use this technique.
+
+### Nonlinear functions
+#### Theory
+Application of antiderative antialiasing to nonlinear functions originated with [Parker _et al._ "Reducing the aliasing of nonlienar waveshaping using continuous-time convolution", DAFx-16](https://dafx16.vutbr.cz/dafxpapers/20-DAFx-16_paper_41-PN.pdf).
+
+In the continuous (analogue) domain, have some continuous time-dependent signal $x(t)$ which is going into a waveshaper (wavefolder, distortion or other nonlinearity), which applies the function $f(x)$ to the signal $x$.
+
+In a digital system our input signal is not the continuous function $x(t)$, but rather is a set of samples is sampled at discrete times $t_1, t_2, t_3, \ldots$, taking values $x_1 = x(t_1)$, $x_2 = x(t_2)$, etc. at these times.
+
+A naive digital implementation of the waveshaper would apply our nonlinear function $f$ directly to each input sample $x_i$, and return $f(x_i)$ at sample $i$.
+But since a nonlinear function will add harmonics above the frequencies in the original signal $x(t)$, this is likely to cause aliasing.
+
+The idea of antiderivative aliasing is to filter the wavefolded signal $f(x(t))$ by:
+* Modelling the original signal $x(t)$ as straight-line segments between the sampled points $(t_1, x(t_1))$, $(t_2, x(t_2))$, etc.
+* Filtering the waveshaped signal by, at time $t_i$, returning the average of the continuous signal $f(x(t))$ between the current time $t_i$ and the time of the previous sample $t_{i-1}$. We denote this averaged (filtered) value by $\bar{f}_i$, and note as an aside that using $\bar{f}_i$ rather than the naive $f(x_i)$ introduces half a sample of delay.
+
+The average of any continuous function $y(t)$ between two times $t_{i-1}$ and $t_i$ is given by the integral,
+
+$$\bar{y} = \frac{1}{t_{i} - t_{i-1}}\int_{t_{i-1}}^{t_i} y(t) dt.$$
+
+Our filtered signal $\bar{f}_i$ is therefore
+
+$$\bar{f}\_i = \frac{1}{t_{i} - t_{i-1}}\int_{t_{i-1}}^{t_i} f(x(t)) dt.$$
+
+We can now do some manipulation of this:
+
+$$ \bar{f}_i =\frac{1}{t_{i} - t_{i-1}}\int_{t_{i-1}}^{t_i} f(x(t)) dt$$
+$$= \frac{1}{t_{i} - t_{i-1}} \int_{x_{i-1}}^{x_i} f(x(t)) \frac{dt}{dx}  dx$$
+$$= \frac{1}{x_{i} - x_{i-1}} \int_{x_{i-1}}^{x_i} f(x(t))  dx$$
+$$= \frac{1}{x_{i} - x_{i-1}}\left(F(x_i) - F(x_{i-1}) \right),$$
+
+where we exploited the assumption that $x(t)$ is composed of straight-line segments to allow us to evaluate
+$$\frac{dt}{dx} = \frac{t_i - t_{i-1}}{x_i - x_{i-1}}$$
+in the interval $t_{i-1} < t < t_i$.
+
+This gives our result,
+
+$$\bar{f}_i  = \frac{F(x_i) - F(x_{i-1})}{x_{i} - x_{i-1}}.$$
+
+where the function $F$ is the integral of the nonlinearity $f$,
+
+$$ F(x) = \int f(x) dx.$$
+
+Note that we cannot actually evaluate this if the current sample is the same as the last one ($x_i = x_{i-1}$), and so in that case we would instead use 
+
+$$\frac{ f(x_i) + f(x_{i-1})}{2}$$
+
+rather than $\bar{f}_i$.
+
+#### Coding
+
+Let's use as an example based around a half-wave rectifier function
+
+$$ f(x) = \begin{cases} x & \mbox{if $x>0$,}\\\\ 0 & \mbox{otherwise.} \end{cases}$$
+
+represented in code as
+```c++
+int32_t fn(int32_t n)
+{
+	if (n > 0)
+		return n;
+	else
+		return 0;
+}
+```
+
+The integral of $f(x)$ is 
+
+$$ F(x) = \begin{cases} \frac{x^2}{2} & \mbox{if $x>0$,}\\\\ 0 & \mbox{otherwise.} \end{cases}$$
+
+represented in code as:
+```c++
+int32_t intfn(int32_t n)
+{
+	if (n > 0)
+		return (n * n) >> 1;
+	else
+		return 0;
+}
+```
+Then, our implementation of the half-wave rectifier is:
+```c++
+void ProcessSample()
+{
+	static int32_t lastAudio = 0;
+	int32_t audio = AudioIn1();
+	int32_t result;
+
+	if (audio != lastAudio)
+	{
+		result = (intfn(audio) - intfn(lastAudio)) / (audio - lastAudio);
+	}
+	else
+	{
+		result = (fn(audio) + fn(lastAudio)) >> 1;
+	}
+	AudioOut1(result);
+}
+```
+
+Note that if `audio` and `lastAudio` are both positive, or both negative, then the result calculated by
+```c++
+result = (intfn(audio) - intfn(lastAudio)) / (audio - lastAudio);
+```
+is the same as
+```c++
+result = (fn(audio) + fn(lastAudio)) >> 1;
+```
+That is, in both the linear regions of the half-rectifier function, the antialiasing does nothing (other than introduce the half-sample delay inherent in the method). This is reasonable becasue, in these linear regions, no extra frequencies are generated. But when the waveform crosses the nonlinearity at $x=0$, the antialiasing then takes effect.
+
+#### What does it sound like?
+
 
