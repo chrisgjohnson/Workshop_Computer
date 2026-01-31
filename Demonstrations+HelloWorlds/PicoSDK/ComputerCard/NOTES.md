@@ -29,9 +29,9 @@ There are two convenient ways to look at the assembly language instructions that
 Secondly, the online tool [Compiler Explorer](https://godbolt.org/) is helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, use the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK or the specifics of the RP2040, so is best for looking at how snippets of user code compile to machine code.
 
 ## Memory
-Though the memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2), this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/) is more readable, and has a useful warning about the stack when using two cores.
+The memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2) and this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/) is more readable, and has a useful warning about the stack when using two cores.
 
-I haven't figured out exactly how the default heap allocator works, but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a custom allocator.
+The default heap allocator is from [newlib](https://github.com/eblot/newlib/blob/master/newlib/libc/stdlib/mallocr.c), but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a simple [custom allocator](https://en.wikipedia.org/wiki/Region-based_memory_management) that has greater knowledge of object size and lifetime than a generic heap allocator. 
 
 ## Running code from RAM
 
@@ -322,3 +322,16 @@ The Pico SDK provides random number generation functions through the [`pico_rand
 Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
 
 ## Antiderivative antialiasing
+When an audio signal is sampled at some sample rate $f_s$, all frequencies in the signal up to the half the sample rate ($f_N=f_s/2$, the Nyquist frequency) are represented in the sampled signal. Any frequencies in the original signal above $f_N$ are reflected into the frequency range $0$ to $f_N$, a phenomenon called [aliasing](https://en.wikipedia.org/wiki/Aliasing), and are mixed together with the signals originally in this frequency band. Once aliasing occurs, it is usually impossible to remove the spurious aliased frequencies from the sampled signal, and so quite a lot of effort is expended in DSP programming to remove or reduce the amplitude of frequencies that would alias, before such aliasing occurs.
+
+Within a DSP algorithm, aliasing can occur only when frequencies greater than $f_N$ are generated. 
+Many common transforms of an audio signals (including amplification/attenuatuation, filtering and delay with fixed parameters) only manipulate the amplitude and phase of existing frequencies within a signal, and do so cannot create new frequencies greater that $f_N$. 
+However, three common processes do generate frequencies greater than $f_N$ and so are at risk of aliasing:
+1. Applying nonlinear functions (such as soft or hard clipping, wavefolders, etc.) to waveforms
+2. Synthesising waveforms containing frequencies greater than $f_N$ -- particularly waveforms with discontinuities such as square and sawtooth
+3. Downsampling (e.g. playing back a 48kHz sample faster than realtime, on a system with 48kHz sample rate)
+
+A brute force technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but is computationally expensive.
+Alternatively (or in conjunction with this), specific mathematical techniques can be used to reduce aliasing.
+One of these is antiderivative antialiasing, which has the advantages of being quite generally applicable (including to all three examples above), and relatively simple and efficient to implement on the RP2040.
+
