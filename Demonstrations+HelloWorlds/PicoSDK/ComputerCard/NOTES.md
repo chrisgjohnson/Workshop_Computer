@@ -431,6 +431,7 @@ void ProcessSample()
 		result = (fn(audio) + fn(lastAudio)) >> 1;
 	}
 	AudioOut1(result);
+    lastAudio = audio;
 }
 ```
 
