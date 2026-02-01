@@ -489,7 +489,7 @@ $$ f_i = f_s (F_i - F_{i-1}). $$
 
 As with the nonlinear function example, we can verify that, within the linear part of the sawtooth, the effect of this scheme is to reproduce the sawtooth wave with a delay of half a sample:
 
-$$ f_i = \f_s \left(f_0 \frac{i^2}{f_s^2} - f_0 \frac{(i-1)^2}{f_s^2} \right) = \frac{f_0}{f_s} (2 i - 1) = f(t_i - 1/2) $$
+$$ f_i = f_s \left(f_0 \frac{i^2}{f_s^2} - f_0 \frac{(i-1)^2}{f_s^2} \right) = \frac{f_0}{f_s} (2 i - 1) = f(t_i - 1/2) $$
 
 
 #### Coding
