@@ -331,12 +331,28 @@ However, three common processes do generate frequencies greater than $f_N$ and s
 2. Synthesising waveforms containing frequencies greater than $f_N$ -- particularly waveforms with discontinuities such as square and sawtooth
 3. Downsampling (e.g. playing back a 48kHz sample faster than realtime, on a system with 48kHz sample rate)
 
-A brute force technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but is computationally expensive.
+A common technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but is computationally expensive.
 Alternatively (or in conjunction with this), specific mathematical techniques can be used to reduce aliasing.
 One of these is antiderivative antialiasing, which has the advantages of being quite generally applicable (including to all three examples above), and relatively simple and efficient to implement on the RP2040. The Utility Pair Wavefolder, Max/rectifier, and oscillators (VCO, Chords, Supersaw) use this technique.
 
-### Nonlinear functions
-#### Theory
+### Theory
+The overall principle behind antiderivative antialiasing is as follows. 
+
+First we synthesise (or reconstruct) a continuous-time representation of the desired signal $f(t)$, which will have frequency components greater than $f_N$. Directly sampling this would result in significant aliasing, but we do not sample this function.
+
+<img width="382" height="285" alt="aa1" src="https://github.com/user-attachments/assets/7ad52250-f4aa-4488-85fd-bc6a3f3d54ff" />
+
+Instead, we integrate this representation in the continuous domain to obtain $F(t) = \int f(t) dt$. This integrated signal has frequencies that decay more quickly with amplitude than the original (amplitudes are divided by frequency). We then sample the integrated function $F(t)$, which introduces aliased tones, but at lower amplitude.
+
+<img width="382" height="285" alt="aa2" src="https://github.com/user-attachments/assets/ab9a0265-ac83-4b5a-a9fa-35d66de137bd" />
+
+Finally, we differentiate this _sampled_ signal numerically. This multiplies amplitudes by frequency, which reverts the original signal back to $f(t)$, but multiplies the amplitudes of the aliased tones only by the frequency they have been aliased to, not the (above-Nyquist) frequency they originated from. The result is diminshed amplitude of aliased frequencies, particularly away from $f_N$.
+
+<img width="382" height="285" alt="aa3" src="https://github.com/user-attachments/assets/4121890a-7bd4-4a8f-873c-23689bd0b380" />
+
+
+
+### Application to Nonlinear functions
 Application of antiderative antialiasing to nonlinear functions originated with [Parker _et al._ "Reducing the aliasing of nonlienar waveshaping using continuous-time convolution", DAFx-16](https://dafx16.vutbr.cz/dafxpapers/20-DAFx-16_paper_41-PN.pdf).
 
 In the continuous (analogue) domain, have some continuous time-dependent signal $x(t)$ which is going into a waveshaper (wavefolder, distortion or other nonlinearity), which applies the function $f(x)$ to the signal $x$.
