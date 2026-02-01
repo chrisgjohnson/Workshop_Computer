@@ -352,7 +352,7 @@ Finally, we differentiate this _sampled_ signal numerically. This multiplies amp
 
 
 
-### Application to Nonlinear functions
+### Application to nonlinear functions
 Application of antiderative antialiasing to nonlinear functions originated with [Parker _et al._ "Reducing the aliasing of nonlienar waveshaping using continuous-time convolution", DAFx-16](https://dafx16.vutbr.cz/dafxpapers/20-DAFx-16_paper_41-PN.pdf).
 
 In the continuous (analogue) domain, have some continuous time-dependent signal $x(t)$ which is going into a waveshaper (wavefolder, distortion or other nonlinearity), which applies the function $f(x)$ to the signal $x$.
@@ -468,4 +468,55 @@ In the spectrograms and audio, some aliasing can be seen and heard even with the
 
 https://github.com/user-attachments/assets/dfa8cdb7-a61a-4de7-946e-699a70486ffc
 
+### Application to synthesis of waveforms
+The antiderivative antialising technique originated in digital synthesis of sawtooth waves ([Välimäki, "Discrete-time synthesis of the sawtooth waveform with reduced aliasing", 2005](https://doi.org/10.1109/LSP.2004.842271)).
 
+The waveform to be represented is a sawtooth of frequency $f_0=1/T$. In terms of a phase $\phi = t/f_0$, one period of this sawtooth is described by
+
+$$ f(t) = 2 f_0 t \qquad \mbox{for} \quad -T/2 \leq t < T/2 $$
+
+Following the general procedure of antiderivative antialiasing, this is integrated in the continous-time domain to give
+
+$$ F(t) = \int f(t) dt = f_0 t^2 \qquad \mbox{for} \quad -T/2 \leq t < T/2 $$
+
+and $F$ (or specifically, its periodic extension) is then sampled to give
+
+$$ F_i = F(t_i) = F(i / f_s).$$
+
+The samples are then differentiated numerically to give
+
+$$ f_i = f_s (F_i - F_{i-1}). $$
+
+As with the nonlinear function example, we can verify that, within the linear part of the sawtooth, the effect of this scheme is to reproduce the sawtooth wave with a delay of half a sample:
+
+$$ f_i = \f_s \left(f_0 \frac{i^2}{f_s^2} - f_0 \frac{(i-1)^2}{f_s^2} \right) = \frac{f_0}{f_s} (2 i - 1) = f(t_i - 1/2) $$
+
+
+#### Coding
+A fixed-point version of this algorithm is implemented in Utility Pair's `Saw.h`, a condensed version of which is as follows:
+```c++
+class Saw
+{
+public:
+	void SetFreq(int32_t f) // f is roughly 89478 per Hz at sr=48kHz
+	{
+		phase_incr = f; 
+		invc = phase_incr>>15;
+	}
+
+	int32_t Tick()
+	{
+		dphase += phase_incr; // -2147483648 to 2147483647
+		int32_t dphase2 = (dphase>>16); // -32768 to 32767
+		dphase2 *= dphase2; // 0 to 1073741824
+		int32_t retval = dphase2 - last_dphase2; // -1073741824 to 1073741824 = ±2^30
+		last_dphase2 = dphase2;
+		return retval/invc; 
+	}
+private:
+	int32_t phase_incr, dphase, last_dphase2, invc;
+};
+```
+* As in Välimäki (2005) the oscillator is described as a function of its unit phase (range 0 to 1), which here is stored in the entire 32-bit range of `dphase`. This is therefore incremented by $2^32 f_0 / f_s \approx 89478 f_0$ every sample, at $f_s =$48kHz.
+* $F(t)$ is proportional to the square of this phase, which is stored in `dphase2`. Bit shifting is used to ensure that this, and the subsequent numerical differentiation (in `retval`) do not overflow 32-bits.
+* `invc` is a scale factor that sets the output to signed 16-bit amplitude (±32768).
