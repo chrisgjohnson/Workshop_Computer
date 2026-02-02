@@ -319,38 +319,54 @@ The Pico SDK provides random number generation functions through the [`pico_rand
 
 ## Euclidean rhythms and sigma-delta modulation
 
-Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from the only 11 bits of PWM resolution.
+Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from 11 bits of PWM resolution.
 
 ## Antiderivative antialiasing
 When an audio signal is sampled at some sample rate $f_s$, all frequencies in the signal up to the half the sample rate ($f_N=f_s/2$, the Nyquist frequency) are represented in the sampled signal. Any frequencies in the original signal above $f_N$ are reflected into the frequency range $0$ to $f_N$, a phenomenon called [aliasing](https://en.wikipedia.org/wiki/Aliasing), and are mixed together with the signals originally in this frequency band. Once aliasing occurs, it is usually impossible to remove the spurious aliased frequencies from the sampled signal, and so quite a lot of effort is expended in DSP programming to remove or reduce the amplitude of frequencies that would alias, before such aliasing occurs.
 
 Within a DSP algorithm, aliasing can occur only when frequencies greater than $f_N$ are generated. 
 Many common transforms of an audio signals (including amplification/attenuatuation, filtering and delay with fixed parameters) only manipulate the amplitude and phase of existing frequencies within a signal, and do so cannot create new frequencies greater that $f_N$. 
-However, three common processes do generate frequencies greater than $f_N$ and so are at risk of aliasing:
+However, a number of common processes do generate frequencies greater than $f_N$ and so are at risk of aliasing, including:
 1. Applying nonlinear functions (such as soft or hard clipping, wavefolders, etc.) to waveforms
 2. Synthesising waveforms containing frequencies greater than $f_N$ -- particularly waveforms with discontinuities such as square and sawtooth
 3. Downsampling (e.g. playing back a 48kHz sample faster than realtime, on a system with 48kHz sample rate)
 
-A common technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but is computationally expensive.
+A common technique for minimising aliasing is to run the entire audio system at a high sample rate to increase the Nyquist frequency. This is quite effective if the frequency content of the signal decays with frequency quite quickly above audible range, but requires extremely high sample rates if thi sis not the case.
 Alternatively (or in conjunction with this), specific mathematical techniques can be used to reduce aliasing.
 One of these is antiderivative antialiasing, which has the advantages of being quite generally applicable (including to all three examples above), and relatively simple and efficient to implement on the RP2040. The Utility Pair Wavefolder, Max/rectifier, and oscillators (VCO, Chords, Supersaw) use this technique.
 
 ### Theory
-The overall principle behind antiderivative antialiasing is as follows. 
-
-First we synthesise (or reconstruct) a continuous-time representation of the desired signal $f(t)$, which will have frequency components greater than $f_N$. Directly sampling this would result in significant aliasing, so we do not do this.
+The overall principle behind antiderivative antialiasing is very simple. We start with a contiuous-time representation of our desired signal $f(t)$, which will have frequenciy components greater than $f_N$. We want to sample this at times $t_i = i/f_s$. Simply evaluating $f$ at the sample times, $f(t_i)$ would result in significant aliasing, 
 
 <img width="382" height="285" alt="aa1" src="https://github.com/user-attachments/assets/7ad52250-f4aa-4488-85fd-bc6a3f3d54ff" />
 
-Instead, we integrate $f(t)$ in the continuous domain to obtain $F(t) = \int f(t) dt$. This integrated signal has frequencies that decay more quickly with amplitude than the original, because the relationship between the Fourier transforms of $f$ and $F$ is
+So, we instead evaluate the average of $f$ between the time of this sample and the previous one,
+
+$$ f_i = \frac{1}{t_i - t_{i-1}} \int_{t_{i-1}}^{t_i} f(t) dt.$$
+
+That's it!
+
+Why does this help reduce aliasing? There are at least two ways of thinking about this. One is to think of the averaging process as applying a 'boxcar' averaging filter to $f(t)$, which reduces high-frequency components, before sampling that filtered function.
+
+$$ \hat{f}(t) := f_s \int_{t-1/f_s}^t f(t) dt, $$
+
+$$ f_i = \hat{f}(t_i).$$
+
+Another way is to think of the average as being a combination of a continuous-time integration and a discrete-time differentiation. If we integrate $f(t)$ in the continuous domain to obtain $F(t) = \int f(t) dt$ then the average becomes 
+
+$$ f_i = \frac{F(t_i) - F(t_{i-1})}{t_i - t_{i-1}}, $$
+
+which is a discrete finite-difference derivative of $F$.
+
+This combination of continuous-time integration and discrete-time differentiation reduces aliasing because of the relationship between the Fourier transforms a function and its integral, namely:
 
 $$\tilde{F}(\omega) \sim \frac{\tilde{f}(\omega)}{\omega}.$$
 
-We then sample the integrated function $F(t)$, which introduces aliased tones, but at lower amplitude than if we had sampled $f(t)$ directly.
+The integrated signal $F(t)$ has frequencies that decay more quickly with amplitude than the original. Sampling the integrated function $F(t)$ to obtain $F(t_i)$ introduces aliased tones, but at lower amplitude than if we had sampled $f(t)$ directly.
 
 <img width="382" height="285" alt="aa2" src="https://github.com/user-attachments/assets/ab9a0265-ac83-4b5a-a9fa-35d66de137bd" />
 
-Finally, we differentiate this sampled signal numerically. This differentiation has the effect of increasing signal amplitudes by a factor proportional to frequency. This transforms the original signal back to $f(t)$, but multiplies the amplitudes of the aliased tones only _by the frequency they have been aliased to_, not the (above-Nyquist) frequency they originated from. The result is diminshed amplitude of aliased frequencies, particularly at frequencies much lower than $f_N$.
+Finally differentiating the signal (in discrete-time) has the effect of increasing signal amplitudes by a factor proportional to frequency. This transforms the original signal back to $f(t)$, but multiplies the amplitudes of the aliased tones only _by the frequency they have been aliased to_, not the (above-Nyquist) frequency they originated from. The result is diminshed amplitude of aliased frequencies, particularly at frequencies much lower than $f_N$.
 
 <img width="382" height="285" alt="aa3" src="https://github.com/user-attachments/assets/4121890a-7bd4-4a8f-873c-23689bd0b380" />
 
