@@ -338,15 +338,19 @@ One of these is antiderivative antialiasing, which has the advantages of being q
 ### Theory
 The overall principle behind antiderivative antialiasing is as follows. 
 
-First we synthesise (or reconstruct) a continuous-time representation of the desired signal $f(t)$, which will have frequency components greater than $f_N$. Directly sampling this would result in significant aliasing, but we do not sample this function.
+First we synthesise (or reconstruct) a continuous-time representation of the desired signal $f(t)$, which will have frequency components greater than $f_N$. Directly sampling this would result in significant aliasing, so we do not do this.
 
 <img width="382" height="285" alt="aa1" src="https://github.com/user-attachments/assets/7ad52250-f4aa-4488-85fd-bc6a3f3d54ff" />
 
-Instead, we integrate this representation in the continuous domain to obtain $F(t) = \int f(t) dt$. This integrated signal has frequencies that decay more quickly with amplitude than the original (amplitudes are divided by frequency). We then sample the integrated function $F(t)$, which introduces aliased tones, but at lower amplitude.
+Instead, we integrate $f(t)$ in the continuous domain to obtain $F(t) = \int f(t) dt$. This integrated signal has frequencies that decay more quickly with amplitude than the original, because the relationship between the Fourier transforms of $f$ and $F$ is
+
+$$\tilde{F}(\omega) \sim \frac{\tilde{f}(\omega)}{\omega}.$$
+
+We then sample the integrated function $F(t)$, which introduces aliased tones, but at lower amplitude than if we had sampled $f(t)$ directly.
 
 <img width="382" height="285" alt="aa2" src="https://github.com/user-attachments/assets/ab9a0265-ac83-4b5a-a9fa-35d66de137bd" />
 
-Finally, we differentiate this _sampled_ signal numerically. This multiplies amplitudes by frequency, which reverts the original signal back to $f(t)$, but multiplies the amplitudes of the aliased tones only by the frequency they have been aliased to, not the (above-Nyquist) frequency they originated from. The result is diminshed amplitude of aliased frequencies, particularly away from $f_N$.
+Finally, we differentiate this sampled signal numerically. This differentiation has the effect of increasing signal amplitudes by a factor proportional to frequency. This transforms the original signal back to $f(t)$, but multiplies the amplitudes of the aliased tones only _by the frequency they have been aliased to_, not the (above-Nyquist) frequency they originated from. The result is diminshed amplitude of aliased frequencies, particularly at frequencies much lower than $f_N$.
 
 <img width="382" height="285" alt="aa3" src="https://github.com/user-attachments/assets/4121890a-7bd4-4a8f-873c-23689bd0b380" />
 
