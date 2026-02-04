@@ -18,6 +18,7 @@
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1 | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt |  |  | Released |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo) | Rust (Embassy framework) | Brian Dorsey |  |  | Released |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0 | C++ (ComputerCard) | Chris Johnson |  | Utility Pair | Released |
+| 26_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds. | 1.0.1 | C++ (ComputerCard) | Johan Eklund | | Resonator | Released |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1 | arduino-pico core and Mozzi 2 library | @todbot / Tod Kurt |  |  | Functional but WIP |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1 | Circuit Python | @todbot / Tod Kurt |  |  | Functional but WIP |
 | 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0 | C++(ComputerCard) | Ben Regnier |  |  | Released |
