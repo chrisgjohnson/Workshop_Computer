@@ -3,17 +3,29 @@ This document is a collection of short tips for ComputerCard development. It's s
 
 # Programming and optimisation
 ## Clock speed
-By default the RP2040 cores run at 125MHz, with an maximum supported speed of 200MHz (originally 133MHz at release). To run at the full 200MHz, call
+By default the RP2040 cores run at 125MHz, with an maximum supported speed of 200MHz (originally 133MHz at release). To run at, say, 192MHz, call
 ```
 vreg_set_voltage(VREG_VOLTAGE_1_15);
-set_sys_clock_khz(200000, true);
+set_sys_clock_khz(192000, true);
 ```
 at the start of `main()`, which requires the headers
 ```
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
 ```
+Not all clock speeds are possible. The script `vcocalc.py` in the RPi Pico SDK (`src/rp2_common/hardware_clocks/scripts/vcocalc.py`) calculates the closest possible clock speed to that requested.
+
 Overclocking a little beyond 200MHz is possible, but the Workshop System Computer seems less amenable to overclocking than an RPi Pico - possibly because the flash memory on program cards is further from the microcontroller. 
+
+### Clock speed and ADC noise
+The RP2040 ADC in the workshop computer is somewhat sensitive to what the RP2040 is doing. I'm not sure if this internal crosstalk within the RP2040, or the fluctuating power requirements of the RP2040 causing interference external to the RP2040. This is most noticable in the audio inputs.
+
+Any periodic signals that are not synchronised to the 48kHz sample clock are liable to alias into the audio signal. These periodic signals include: the clock speed of the RP2040, the interrupts that handle sigma-delta modulation of CV PWM outputs, and any periodic code running on the non-ComputerCard core.
+
+To minimise these:
+* In all versions of ComputerCard, choose a clock frequency that exactly multiplies the Nyquist frequency of 24kHz. 144MHz and 192MHz are sensible choices.
+* In ComputerCard 0.2.6 - 0.2.8, the CV out PWM runs at the clock frequency divided by 2048. No clock frequency achievable on the RP2040 makes this a multiple of 24kHz, so these versions have aliased tones in the audio input.
+* In ComputerCard 0.3.x, the CV out PWM runs at the clock frequency divided by 2000. For clock frequencies 48MHz, 96MHz, 144MHz and 192MHz, this PWM frequency, and the clock frequency itself, exactly multiply 24kHz and so is alias-free.
 
 ## Assembly language
 For micro-optimisations it can be helpful to see what machine code instructions the C/C++ is compiling to. The Cortex M0+ cores in the RP2040 implement the ARMv6-M architecture, which has a fairly simple instruction set. The important information for understanding the architecture is in:
