@@ -1,3 +1,9 @@
+# v1.1
+
+2026-02-04
+
+This versions adds chord change from pulse trigger as well as a browser UI for picking chords and their order.
+
 # v1.0.1
 
 2026-01-30
