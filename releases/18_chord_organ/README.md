@@ -20,6 +20,8 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 | Output | Function |
 |--------|----------|
 | **Audio 1 & 2** | Mixed chord (same on both). |
+| **CV 1** | Current root note (1V/oct, calibrated). |
+| **CV 2** | Highest note in current chord (1V/oct, calibrated). |
 | **Pulse 1** | Brief pulse on chord or root change (or Pulse 1 in rising edge). |
 | **LEDs 0–3** | Chord index in binary (0–15). |
 | **LED 4** | Reset indicator (on while reset pulse is high). |

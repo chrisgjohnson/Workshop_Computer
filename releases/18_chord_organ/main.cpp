@@ -9,6 +9,12 @@
  * - CV In 1: Chord selection CV (summed with Main Knob)
  * - CV In 2: Root note 1V/oct tracking
  * - Audio In 1: VCA control (0V to +5V for volume 0% to 100%, full volume when disconnected)
+ *
+ * Outputs:
+ * - Audio Out 1 & 2: Mixed chord output
+ * - CV Out 1: Current root note (1V/oct)
+ * - CV Out 2: Highest note in current chord (1V/oct)
+ * - Pulse Out 1: Trigger on chord/root change
  */
 
 #include "ComputerCard.h"
@@ -180,6 +186,21 @@ protected:
 
         AudioOut1((int16_t)mix);
         AudioOut2((int16_t)mix);
+
+        // --- CV Outputs: Root note on CV1, Highest note on CV2 ---
+        CVOut1MIDINote(rootQuant);
+
+        // Find highest note in current chord
+        int highestNote = rootQuant;
+        for (int i = 0; i < kMaxVoices; i++) {
+            if (active[i]) {
+                const int8_t* chord = kChordNotes[chordQuant];
+                int note = rootQuant + chord[i];
+                if (note > highestNote) highestNote = note;
+            }
+        }
+        if (highestNote > 127) highestNote = 127;
+        CVOut2MIDINote(highestNote);
 
         if (resetPulseCount > 0) {
             PulseOut1(true);
