@@ -6,20 +6,24 @@
  * Controls:
  * - Main Knob: Chord selection (16 chords)
  * - Knob X: Root note transpose (+4 octaves)
+ * - Knob Y: Progression pattern selection (0 = off, 1-9 = patterns)
  * - CV In 1: Chord selection CV (summed with Main Knob)
  * - CV In 2: Root note 1V/oct tracking
  * - Audio In 1: VCA control (0V to +5V for volume 0% to 100%, full volume when disconnected)
+ * - Pulse In 1: Trigger - advances progression step & retriggers chord
+ * - Pulse In 2: Waveform cycle trigger
  *
  * Outputs:
  * - Audio Out 1 & 2: Mixed chord output
  * - CV Out 1: Highest note in current chord (1V/oct)
- * - CV Out 2: (Available)
+ * - CV Out 2: Sequenced root note from progression (1V/oct)
  * - Pulse Out 1: Trigger on chord/root change
  */
 
 #include "ComputerCard.h"
 #include "chords.h"
 #include "lookup_tables.h"
+#include "progressions.h"
 #include <cstdint>
 
 #ifndef __not_in_flash_func
@@ -57,7 +61,8 @@ public:
     ChordOrganCard() : chordQuant(0), rootQuant(60),
                        chordRawSmoothed(2048), rootPotSmoothed(2048), rootCVSmoothed(2048),
                        resetPulseCount(0), glideSamplesLeft(0), waveformIndex(0),
-                       stackedMode(false), glideEnabled(true), changed(false) {
+                       stackedMode(false), glideEnabled(true), changed(false),
+                       progressionQuant(0), progressionStep(0), knobYSmoothed(2048) {
         EnableNormalisationProbe();  // Enable jack detection
         for (int i = 0; i < kMaxVoices; i++) {
             phase[i] = 0;
@@ -75,9 +80,19 @@ protected:
         // --- Read controls (with hysteresis) ---
         int32_t mainKnob = KnobVal(Knob::Main);
         int32_t knobX = KnobVal(Knob::X);
+        int32_t knobY = KnobVal(Knob::Y);
         int32_t cv1 = CVIn1();
         int32_t cv2 = CVIn2();
         int32_t audio1 = AudioIn1();
+
+        // Progression selection: Knob Y (0..4095 -> 0..9 for 10 patterns)
+        knobYSmoothed += (knobY - knobYSmoothed) >> 5;
+        int32_t newProgressionQuant = (knobYSmoothed * kProgressionCount) >> 12;
+        if (newProgressionQuant >= kProgressionCount) newProgressionQuant = kProgressionCount - 1;
+        if (newProgressionQuant != progressionQuant) {
+            progressionQuant = newProgressionQuant;
+            progressionStep = 0;  // Reset to start when changing progression
+        }
 
         // Chord selection: Main knob + CV1 (0..4095 each -> 0..8190, scaled to 0..4095 for 16 steps)
         int32_t chordRaw = mainKnob + (cv1 + 2048);
@@ -126,8 +141,28 @@ protected:
             changed = true;
         }
 
-        if (PulseIn1RisingEdge())
-            changed = true;
+        if (PulseIn1RisingEdge()) {
+            changed = true;  // Retrigger chord
+
+            // Advance sequencer if progression pattern is selected
+            if (progressionQuant > 0) {
+                progressionStep++;
+
+                // Find progression length (stop at first -1 or max length)
+                int progressionLength = kMaxProgressionLength;
+                for (int i = 0; i < kMaxProgressionLength; i++) {
+                    if (kProgressions[progressionQuant][i] == -1) {
+                        progressionLength = i;
+                        break;
+                    }
+                }
+
+                // Wrap step counter
+                if (progressionStep >= progressionLength) {
+                    progressionStep = 0;
+                }
+            }
+        }
 
         // Switch controls glide mode and waveform cycling
         if (SwitchChanged()) {
@@ -200,8 +235,20 @@ protected:
         if (highestNote > 127) highestNote = 127;
         CVOut1MIDINote(highestNote);
 
-        // CV Out 2: Available for future use
-        CVOut2(0);
+        // CV Out 2: Sequenced root note
+        int sequencedRootNote = rootQuant;  // Default to current root
+
+        if (progressionQuant > 0) {
+            // Add progression offset to base root
+            int8_t rootOffset = kProgressions[progressionQuant][progressionStep];
+            sequencedRootNote = rootQuant + rootOffset;
+
+            // Clamp to MIDI range
+            if (sequencedRootNote > 127) sequencedRootNote = 127;
+            if (sequencedRootNote < 0) sequencedRootNote = 0;
+        }
+
+        CVOut2MIDINote(sequencedRootNote);
 
         if (resetPulseCount > 0) {
             PulseOut1(true);
@@ -232,6 +279,11 @@ private:
     bool stackedMode;
     bool glideEnabled;
     bool changed;
+
+    // Sequencer state
+    int32_t progressionQuant;    // Current progression pattern (0-9)
+    int32_t progressionStep;     // Current step in progression (0-7)
+    int32_t knobYSmoothed;       // Smoothed Knob Y value
 
     void updateTargetsFromChord() {
         const int8_t* chord = kChordNotes[chordQuant];

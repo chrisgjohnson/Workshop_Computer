@@ -9,9 +9,10 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 | **Main knob** | Chord selection (0–15). Summed with CV 1. |
 | **CV 1** | Chord CV: add to Main knob for voltage-controlled chord. |
 | **X knob** | Root transpose (semitones). |
+| **Y knob** | Progression pattern selection (0 = off, 1–9 = patterns). |
 | **CV 2** | Root note (1V/oct). |
 | **Audio 1** | VCA control: 0V to +5V controls output volume (0% to 100%). Full volume when disconnected. |
-| **Pulse 1** | Reset / trigger: retriggers chord update and reset pulse/LED. |
+| **Pulse 1** | Trigger: advances progression step and retriggers chord/reset pulse. |
 | **Pulse 2** | Cycle waveform (sine → triangle → square → saw) on each trigger. |
 | **Switch Down** | Cycle waveform (sine → triangle → square → saw). |
 
@@ -21,7 +22,7 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 |--------|----------|
 | **Audio 1 & 2** | Mixed chord (same on both). |
 | **CV 1** | Highest note in current chord (1V/oct, calibrated). |
-| **CV 2** | (Available for future use). |
+| **CV 2** | Sequenced root note from selected progression (1V/oct, calibrated). |
 | **Pulse 1** | Brief pulse on chord or root change (or Pulse 1 in rising edge). |
 | **LEDs 0–3** | Chord index in binary (0–15). |
 | **LED 4** | Reset indicator (on while reset pulse is high). |
@@ -42,9 +43,26 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 11. Minor 6th  
 12. Diminished  
 13. Augmented  
-14. Root  
-15. Sub octave  
-16. 2 up 1 down octaves  
+14. Root
+15. Sub octave
+16. 2 up 1 down octaves
+
+## Progression Patterns
+
+The chord progression sequencer outputs root notes via CV Out 2. Select patterns with Knob Y, advance steps with Pulse In 1.
+
+0. **Off** - Sequencer disabled, CV Out 2 outputs current root
+1. **I-IV-V-I** - Classic pop/rock progression (C-F-G-C)
+2. **I-V-vi-IV** - Popular progression (C-G-Am-F)
+3. **ii-V-I** - Jazz turnaround (Dm-G-C)
+4. **I-vi-IV-V** - 50s progression (C-Am-F-G)
+5. **I-IV-I-V** - Blues progression (C-F-C-G)
+6. **vi-IV-I-V** - Sensitive progression (Am-F-C-G)
+7. **I-bVII-IV-I** - Mixolydian (C-Bb-F-C)
+8. **Chromatic** - Ascending chromatic scale (C-C#-D-D#-E-F-F#-G)
+9. **Circle of 5ths** - Circle of fifths sequence (C-G-D-A-E-B-F#-C#)
+
+**Note:** Root offsets are relative to the current root (CV In 2 + Knob X). Chord type is still controlled manually via Main Knob.
 
 ## Build
 
