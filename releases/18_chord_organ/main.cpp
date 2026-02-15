@@ -12,8 +12,8 @@
  *
  * Outputs:
  * - Audio Out 1 & 2: Mixed chord output
- * - CV Out 1: Current root note (1V/oct)
- * - CV Out 2: Highest note in current chord (1V/oct)
+ * - CV Out 1: Highest note in current chord (1V/oct)
+ * - CV Out 2: (Available)
  * - Pulse Out 1: Trigger on chord/root change
  */
 
@@ -187,10 +187,8 @@ protected:
         AudioOut1((int16_t)mix);
         AudioOut2((int16_t)mix);
 
-        // --- CV Outputs: Root note on CV1, Highest note on CV2 ---
-        CVOut1MIDINote(rootQuant);
-
-        // Find highest note in current chord
+        // --- CV Outputs ---
+        // CV Out 1: Highest note in current chord
         int highestNote = rootQuant;
         for (int i = 0; i < kMaxVoices; i++) {
             if (active[i]) {
@@ -200,7 +198,10 @@ protected:
             }
         }
         if (highestNote > 127) highestNote = 127;
-        CVOut2MIDINote(highestNote);
+        CVOut1MIDINote(highestNote);
+
+        // CV Out 2: Available for future use
+        CVOut2(0);
 
         if (resetPulseCount > 0) {
             PulseOut1(true);
