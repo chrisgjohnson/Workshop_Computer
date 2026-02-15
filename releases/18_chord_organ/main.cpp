@@ -100,9 +100,8 @@ protected:
         if (PulseIn1RisingEdge())
             changed = true;
 
-        if (SwitchChanged() && SwitchVal() == Switch::Down) {
+        if (PulseIn2RisingEdge() || (SwitchChanged() && SwitchVal() == Switch::Down))
             waveformIndex = (waveformIndex + 1) & 3;
-        }
 
         if (changed) {
             updateTargetsFromChord();
@@ -131,7 +130,7 @@ protected:
             if (!active[i]) continue;
             voiceCount++;
             phase[i] += (uint32_t)phaseInc[i];
-            int32_t sample = sineLookup(phase[i]);
+            int32_t sample = waveformSample(phase[i]);
             int32_t amp = (voiceCount <= 8) ? kAmpPerVoice[voiceCount - 1] : kAmpPerVoice[7];
             mix += (sample * amp) >> 8;
         }
@@ -206,6 +205,36 @@ private:
         int32_t s1 = SINE_TABLE[index & 0x1FF];
         int32_t s2 = SINE_TABLE[(index + 1) & 0x1FF];
         return (s2 * (int32_t)frac + s1 * (int32_t)(65536 - frac)) >> 16;
+    }
+
+    // Triangle: ±32000, same scale as sine. Phase 0..2^32 = one period, 4 linear segments.
+    inline int32_t __not_in_flash_func(triangleLookup)(uint32_t ph) {
+        uint32_t q = ph >> 30;
+        uint32_t frac = (ph & 0x3FFFFFFFU) * 32000U >> 30;
+        if (q == 0) return (int32_t)frac;
+        if (q == 1) return (int32_t)(32000 - frac);
+        if (q == 2) return -(int32_t)frac;
+        return (int32_t)(frac - 32000);
+    }
+
+    // Square: +32000 first half cycle, -32000 second half.
+    inline int32_t __not_in_flash_func(squareLookup)(uint32_t ph) {
+        return (ph < 0x80000000U) ? 32000 : -32000;
+    }
+
+    // Saw: ramp -32000 to +32000 over one period (phase 0..2^32).
+    inline int32_t __not_in_flash_func(sawLookup)(uint32_t ph) {
+        int32_t x = (int32_t)((ph >> 16) - 32768);
+        return (x * 1000) >> 10;
+    }
+
+    inline int32_t __not_in_flash_func(waveformSample)(uint32_t ph) {
+        switch (waveformIndex) {
+            case 1: return triangleLookup(ph);
+            case 2: return squareLookup(ph);
+            case 3: return sawLookup(ph);
+            default: return sineLookup(ph);
+        }
     }
 };
 

@@ -11,7 +11,8 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 | **X knob** | Root transpose (semitones). |
 | **CV 2** | Root note (1V/oct). |
 | **Pulse 1** | Reset / trigger: retriggers chord update and reset pulse/LED. |
-| **Switch Down** | Cycle waveform (sine; other shapes reserved for future). |
+| **Pulse 2** | Cycle waveform (sine → triangle → square → saw) on each trigger. |
+| **Switch Down** | Cycle waveform (sine → triangle → square → saw). |
 
 ## Outputs
 
