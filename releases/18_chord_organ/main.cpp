@@ -1,0 +1,216 @@
+/**
+ * Chord Organ - Workshop Computer program card
+ * Replicates Music Thing Modular Chord-Organ: 16 chords, 8 voices, 1V/oct root.
+ * Pico SDK + ComputerCard, 48 kHz.
+ */
+
+#include "ComputerCard.h"
+#include "chords.h"
+#include "lookup_tables.h"
+#include <cstdint>
+
+#ifndef __not_in_flash_func
+#define __not_in_flash_func(f) f
+#endif
+
+// Hysteresis for chord/root to avoid jitter (knob 0-4095)
+constexpr int32_t kChangeTolerance = 64;
+
+// Root CV: LOW_NOTE = bottom of range (Chord-Organ uses 36). Note range in semitones.
+constexpr int kLowNote = 36;
+constexpr int kNoteRange = 38;
+
+// CV input: -2048..2047 maps to voltage. 1V/oct: ~341 counts per octave.
+// Root CV quant: map (CV2 + 2048) to semitones. Clamp low end.
+// Chord-Organ: rootClampLow = (ADC_MAX/noteRange)*0.5, rootMapCoeff = noteRange/(ADC_MAX-rootClampLow)
+// Workshop CV: 0-4095 effective (CVIn2 is -2048..2047, so +2048 = 0..4095).
+constexpr int32_t kCVCenter = 2048;
+constexpr int32_t kCVSpan = 4096;
+constexpr int32_t kRootClampLow = (kCVSpan / kNoteRange) / 2;
+constexpr float kRootMapCoeff = (float)kNoteRange / (kCVSpan - kRootClampLow);
+
+// Reset pulse length in samples (48 kHz): ~10 ms
+constexpr uint32_t kResetPulseSamples = 480;
+
+// Glide: 50 ms default = 2400 samples. Linear ramp of phase increment.
+constexpr uint32_t kGlideSamples = 2400;
+
+// Stack detune: voices 5-8 = 1-4 at 1.001x (fixed-point 1001/1000)
+constexpr uint32_t kStackScaleNum = 1001;
+constexpr uint32_t kStackScaleDen = 1000;
+
+class ChordOrganCard : public ComputerCard {
+public:
+    ChordOrganCard() : chordQuant(0), rootQuant(60),
+                       chordRawSmoothed(2048), rootPotSmoothed(2048), rootCVSmoothed(2048),
+                       resetPulseCount(0), glideSamplesLeft(0), waveformIndex(0),
+                       stackedMode(false), glideEnabled(true), changed(false) {
+        for (int i = 0; i < kMaxVoices; i++) {
+            phase[i] = 0;
+            phaseInc[i] = MIDI_PHASE_INC[60];
+            phaseIncTarget[i] = MIDI_PHASE_INC[60];
+            active[i] = false;
+        }
+        updateTargetsFromChord();
+        for (int i = 0; i < kMaxVoices; i++)
+            phaseInc[i] = phaseIncTarget[i];
+    }
+
+protected:
+    void ProcessSample() override {
+        // --- Read controls (with hysteresis) ---
+        int32_t mainKnob = KnobVal(Knob::Main);
+        int32_t knobX = KnobVal(Knob::X);
+        int32_t cv1 = CVIn1();
+        int32_t cv2 = CVIn2();
+
+        int32_t chordRaw = mainKnob + (cv1 + 2048);  // 0..4095 + 0..4095 -> 0..8190, clamp to 0..4095 for 16 steps
+        chordRaw = chordRaw * 4095 / 8190;
+        if (chordRaw > 4095) chordRaw = 4095;
+        if (chordRaw < 0) chordRaw = 0;
+
+        chordRawSmoothed += (chordRaw - chordRawSmoothed) >> 5;
+        int32_t newChordQuant = (chordRawSmoothed * kChordCount) >> 12;
+        if (newChordQuant >= kChordCount) newChordQuant = kChordCount - 1;
+        if (newChordQuant != chordQuant) {
+            chordQuant = newChordQuant;
+            changed = true;
+        }
+
+        int32_t rootPot = (knobX < 0) ? 0 : (knobX > 4095 ? 4095 : knobX);
+        int32_t rootCV = cv2 + 2048;
+        if (rootCV < 0) rootCV = 0;
+        if (rootCV > 4095) rootCV = 4095;
+
+        rootPotSmoothed += (rootPot - rootPotSmoothed) >> 5;
+        rootCVSmoothed += (rootCV - rootCVSmoothed) >> 5;
+
+        int32_t rootCVQuant = kLowNote;
+        if ((int32_t)rootCVSmoothed > kRootClampLow)
+            rootCVQuant = kLowNote + 1 + (int32_t)((rootCVSmoothed - kRootClampLow) * kRootMapCoeff);
+        int32_t rootPotQuant = (rootPotSmoothed * 48) >> 12;
+        int32_t newRootQuant = rootCVQuant + rootPotQuant;
+        if (newRootQuant > 127) newRootQuant = 127;
+        if (newRootQuant < 0) newRootQuant = 0;
+        if (newRootQuant != rootQuant) {
+            rootQuant = newRootQuant;
+            changed = true;
+        }
+
+        if (PulseIn1RisingEdge())
+            changed = true;
+
+        if (SwitchChanged() && SwitchVal() == Switch::Down) {
+            waveformIndex = (waveformIndex + 1) & 3;
+        }
+
+        if (changed) {
+            updateTargetsFromChord();
+            glideSamplesLeft = glideEnabled ? kGlideSamples : 0;
+            resetPulseCount = kResetPulseSamples;
+            changed = false;
+        }
+
+        // --- Glide phase increments toward target ---
+        if (glideSamplesLeft > 0) {
+            for (int i = 0; i < kMaxVoices; i++) {
+                if (!active[i]) continue;
+                int32_t delta = (int32_t)(phaseIncTarget[i] - phaseInc[i]);
+                phaseInc[i] += delta / (int32_t)glideSamplesLeft;
+            }
+            glideSamplesLeft--;
+        } else {
+            for (int i = 0; i < kMaxVoices; i++)
+                phaseInc[i] = phaseIncTarget[i];
+        }
+
+        // --- Oscillators: phase += inc, lookup sine, scale by amp, sum ---
+        int32_t mix = 0;
+        int voiceCount = 0;
+        for (int i = 0; i < kMaxVoices; i++) {
+            if (!active[i]) continue;
+            voiceCount++;
+            phase[i] += (uint32_t)phaseInc[i];
+            int32_t sample = sineLookup(phase[i]);
+            int32_t amp = (voiceCount <= 8) ? kAmpPerVoice[voiceCount - 1] : kAmpPerVoice[7];
+            mix += (sample * amp) >> 8;
+        }
+
+        if (voiceCount == 0)
+            voiceCount = 1;
+        mix = mix >> 2;
+        if (mix > 2047) mix = 2047;
+        if (mix < -2048) mix = -2048;
+
+        AudioOut1((int16_t)mix);
+        AudioOut2((int16_t)mix);
+
+        if (resetPulseCount > 0) {
+            PulseOut1(true);
+            LedOn(4, true);
+            resetPulseCount--;
+        } else {
+            PulseOut1(false);
+            LedOn(4, false);
+        }
+
+        for (int i = 0; i < 4; i++)
+            LedOn(i, (chordQuant >> i) & 1);
+
+        LedBrightness(5, waveformIndex * 1024);
+    }
+
+private:
+    int32_t chordQuant;
+    int32_t rootQuant;
+    int32_t chordRawSmoothed, rootPotSmoothed, rootCVSmoothed;
+    uint32_t phase[kMaxVoices];
+    int32_t phaseInc[kMaxVoices];
+    int32_t phaseIncTarget[kMaxVoices];
+    bool active[kMaxVoices];
+    uint32_t resetPulseCount;
+    uint32_t glideSamplesLeft;
+    int waveformIndex;
+    bool stackedMode;
+    bool glideEnabled;
+    bool changed;
+
+    void updateTargetsFromChord() {
+        const int8_t* chord = kChordNotes[chordQuant];
+        for (int i = 0; i < kMaxVoices; i++) {
+            if (chord[i] < 0) {
+                active[i] = false;
+                continue;
+            }
+            active[i] = true;
+            int note = rootQuant + chord[i];
+            if (note < 0) note = 0;
+            if (note > 127) note = 127;
+            phaseIncTarget[i] = (int32_t)MIDI_PHASE_INC[note];
+        }
+        if (stackedMode) {
+            for (int i = 0; i < 4; i++) {
+                if (active[i]) {
+                    active[i + 4] = true;
+                    phaseIncTarget[i + 4] = (phaseIncTarget[i] * (int32_t)kStackScaleNum) / (int32_t)kStackScaleDen;
+                } else {
+                    active[i + 4] = false;
+                }
+            }
+        }
+    }
+
+    inline int32_t __not_in_flash_func(sineLookup)(uint32_t ph) {
+        uint32_t index = ph >> 23;
+        uint32_t frac = (ph & 0x7FFFFF) >> 7;
+        int32_t s1 = SINE_TABLE[index & 0x1FF];
+        int32_t s2 = SINE_TABLE[(index + 1) & 0x1FF];
+        return (s2 * (int32_t)frac + s1 * (int32_t)(65536 - frac)) >> 16;
+    }
+};
+
+int main() {
+    ChordOrganCard card;
+    card.Run();
+    return 0;
+}
