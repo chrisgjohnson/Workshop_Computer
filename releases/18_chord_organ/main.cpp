@@ -2,6 +2,13 @@
  * Chord Organ - Workshop Computer program card
  * Replicates Music Thing Modular Chord-Organ: 16 chords, 8 voices, 1V/oct root.
  * Pico SDK + ComputerCard, 48 kHz.
+ *
+ * Controls:
+ * - Main Knob: Chord selection (16 chords)
+ * - Knob X: Root note transpose (+4 octaves)
+ * - CV In 1: Chord selection CV (summed with Main Knob)
+ * - CV In 2: Root note 1V/oct tracking
+ * - Audio In 1: VCA control (0V to +5V for volume 0% to 100%)
  */
 
 #include "ComputerCard.h"
@@ -63,11 +70,20 @@ protected:
         int32_t knobX = KnobVal(Knob::X);
         int32_t cv1 = CVIn1();
         int32_t cv2 = CVIn2();
+        int32_t audio1 = AudioIn1();
 
-        int32_t chordRaw = mainKnob + (cv1 + 2048);  // 0..4095 + 0..4095 -> 0..8190, clamp to 0..4095 for 16 steps
+        // Chord selection: Main knob + CV1 (0..4095 each -> 0..8190, scaled to 0..4095 for 16 steps)
+        int32_t chordRaw = mainKnob + (cv1 + 2048);
         chordRaw = chordRaw * 4095 / 8190;
         if (chordRaw > 4095) chordRaw = 4095;
         if (chordRaw < 0) chordRaw = 0;
+
+        // VCA control: Audio In 1 (0V to +5V) controls overall volume
+        // audio1 range: -2048 to +2047 (-5V to +5V approx)
+        // Map 0V to +5V (audio1: 0 to +2047) to volume 0.0 to 1.0
+        int32_t volumeCV = audio1;
+        if (volumeCV < 0) volumeCV = 0;      // Below 0V = silence
+        if (volumeCV > 2047) volumeCV = 2047; // Clamp at +5V
 
         chordRawSmoothed += (chordRaw - chordRawSmoothed) >> 5;
         int32_t newChordQuant = (chordRawSmoothed * kChordCount) >> 12;
@@ -151,6 +167,9 @@ protected:
         mix = mix >> 2;
         if (mix > 2047) mix = 2047;
         if (mix < -2048) mix = -2048;
+
+        // Apply VCA: volumeCV is 0..2047, scale mix proportionally
+        mix = (mix * volumeCV) >> 11;  // Divide by 2048 (shift by 11 bits)
 
         AudioOut1((int16_t)mix);
         AudioOut2((int16_t)mix);
