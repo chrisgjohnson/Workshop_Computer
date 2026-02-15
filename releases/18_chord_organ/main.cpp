@@ -94,11 +94,22 @@ protected:
             progressionStep = 0;  // Reset to start when changing progression
         }
 
-        // Chord selection: Main knob + CV1 (0..4095 each -> 0..8190, scaled to 0..4095 for 16 steps)
-        int32_t chordRaw = mainKnob + (cv1 + 2048);
-        chordRaw = chordRaw * 4095 / 8190;
-        if (chordRaw > 4095) chordRaw = 4095;
-        if (chordRaw < 0) chordRaw = 0;
+        // Chord selection: Main knob (0..4095) with optional CV1 (0V to +5V)
+        int32_t chordRaw;
+        if (Disconnected(Input::CV1)) {
+            // Knob only: full range 0-4095 → chords 0-15
+            chordRaw = mainKnob;
+        } else {
+            // CV1 connected: both knob and CV can independently access all chords
+            // Scale CV1 (0 to +2047 for 0V to +5V) to match knob range (0-4095)
+            int32_t cv1Scaled = cv1;
+            if (cv1Scaled < 0) cv1Scaled = 0;        // Ignore negative voltages
+            cv1Scaled = (cv1Scaled * 4095) / 2047;   // Scale 0-2047 to 0-4095
+
+            // Add knob + CV, clamp to max
+            chordRaw = mainKnob + cv1Scaled;
+            if (chordRaw > 4095) chordRaw = 4095;
+        }
 
         // VCA control: Audio In 1 (0V to +5V) controls overall volume
         // If no cable plugged in, bypass VCA (full volume)
