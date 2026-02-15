@@ -100,7 +100,18 @@ protected:
         if (PulseIn1RisingEdge())
             changed = true;
 
-        if (PulseIn2RisingEdge() || (SwitchChanged() && SwitchVal() == Switch::Down))
+        // Switch controls glide mode and waveform cycling
+        if (SwitchChanged()) {
+            Switch sw = SwitchVal();
+            if (sw == Switch::Up)
+                glideEnabled = true;
+            else if (sw == Switch::Middle)
+                glideEnabled = false;
+            else if (sw == Switch::Down)
+                waveformIndex = (waveformIndex + 1) & 3;
+        }
+
+        if (PulseIn2RisingEdge())
             waveformIndex = (waveformIndex + 1) & 3;
 
         if (changed) {
