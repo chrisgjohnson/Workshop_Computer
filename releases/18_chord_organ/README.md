@@ -10,6 +10,7 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 | **CV 1** | Chord CV: add to Main knob for voltage-controlled chord. |
 | **X knob** | Root transpose (semitones). |
 | **CV 2** | Root note (1V/oct). |
+| **Audio 1** | VCA control: 0V to +5V controls output volume (0% to 100%). Full volume when disconnected. |
 | **Pulse 1** | Reset / trigger: retriggers chord update and reset pulse/LED. |
 | **Pulse 2** | Cycle waveform (sine → triangle → square → saw) on each trigger. |
 | **Switch Down** | Cycle waveform (sine → triangle → square → saw). |
