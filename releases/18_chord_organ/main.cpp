@@ -8,7 +8,7 @@
  * - Knob X: Root note transpose (+4 octaves)
  * - CV In 1: Chord selection CV (summed with Main Knob)
  * - CV In 2: Root note 1V/oct tracking
- * - Audio In 1: VCA control (0V to +5V for volume 0% to 100%)
+ * - Audio In 1: VCA control (0V to +5V for volume 0% to 100%, full volume when disconnected)
  */
 
 #include "ComputerCard.h"
@@ -52,6 +52,7 @@ public:
                        chordRawSmoothed(2048), rootPotSmoothed(2048), rootCVSmoothed(2048),
                        resetPulseCount(0), glideSamplesLeft(0), waveformIndex(0),
                        stackedMode(false), glideEnabled(true), changed(false) {
+        EnableNormalisationProbe();  // Enable jack detection
         for (int i = 0; i < kMaxVoices; i++) {
             phase[i] = 0;
             phaseInc[i] = MIDI_PHASE_INC[60];
@@ -79,11 +80,17 @@ protected:
         if (chordRaw < 0) chordRaw = 0;
 
         // VCA control: Audio In 1 (0V to +5V) controls overall volume
+        // If no cable plugged in, bypass VCA (full volume)
         // audio1 range: -2048 to +2047 (-5V to +5V approx)
         // Map 0V to +5V (audio1: 0 to +2047) to volume 0.0 to 1.0
-        int32_t volumeCV = audio1;
-        if (volumeCV < 0) volumeCV = 0;      // Below 0V = silence
-        if (volumeCV > 2047) volumeCV = 2047; // Clamp at +5V
+        int32_t volumeCV;
+        if (Disconnected(Input::Audio1)) {
+            volumeCV = 2047;  // Full volume when nothing connected
+        } else {
+            volumeCV = audio1;
+            if (volumeCV < 0) volumeCV = 0;      // Below 0V = silence
+            if (volumeCV > 2047) volumeCV = 2047; // Clamp at +5V
+        }
 
         chordRawSmoothed += (chordRaw - chordRawSmoothed) >> 5;
         int32_t newChordQuant = (chordRawSmoothed * kChordCount) >> 12;
