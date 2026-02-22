@@ -77,7 +77,7 @@ protected:
         int32_t cv2 = CVIn2();
         int32_t audio1 = AudioIn1();
 
-        // Progression selection: Knob Y (0..4095 -> 0..9 for 10 patterns)
+        // Progression selection: Knob Y (0..4095 -> 0..8 for 9 patterns)
         knobYSmoothed += (knobY - knobYSmoothed) >> 5;
         int32_t newProgressionQuant = (knobYSmoothed * kProgressionCount) >> 12;
         if (newProgressionQuant >= kProgressionCount) newProgressionQuant = kProgressionCount - 1;

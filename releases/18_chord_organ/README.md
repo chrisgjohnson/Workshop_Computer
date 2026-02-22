@@ -1,19 +1,21 @@
 # 18 Chord Organ
 
-Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behaviour of the standalone Chord-Organ module: 16 chords, up to 8 voices per chord, 1V/oct root control, glide, and optional stacked (detuned doubled) voices.
+Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behaviour of the standalone Chord-Organ module: 16 chords, up to 8 voices per chord, 1V/oct root control, and glide.
 
 ## Controls
 
 | Input | Function |
 |-------|----------|
 | **Main knob** | Chord selection (0–15). Summed with CV 1. |
-| **CV 1** | Chord CV: add to Main knob for voltage-controlled chord. |
+| **CV 1** | Chord CV (0V to +5V): added to Main knob for voltage-controlled chord selection. Negative voltages ignored. |
 | **X knob** | Root transpose (semitones). |
-| **Y knob** | Progression pattern selection (0 = off, 1–9 = patterns). |
+| **Y knob** | Progression pattern selection (0–8). |
 | **CV 2** | Root note (1V/oct). |
 | **Audio 1** | VCA control: 0V to +5V controls output volume (0% to 100%). Full volume when disconnected. |
 | **Pulse 1** | Trigger: advances progression step and retriggers chord/reset pulse. |
 | **Pulse 2** | Cycle waveform (sine → triangle → square → saw) on each trigger. |
+| **Switch Up** | Enable glide (portamento). |
+| **Switch Middle** | Disable glide. |
 | **Switch Down** | Cycle waveform (sine → triangle → square → saw). |
 
 ## Outputs
@@ -51,16 +53,15 @@ Chord Organ for the Music Thing Modular Workshop Computer. Replicates the behavi
 
 The chord progression sequencer outputs root notes via CV Out 2. Select patterns with Knob Y, advance steps with Pulse In 1.
 
-0. **Off** - Sequencer disabled, CV Out 2 outputs current root
-1. **I-IV-V-I** - Classic pop/rock progression (C-F-G-C)
-2. **I-V-vi-IV** - Popular progression (C-G-Am-F)
-3. **ii-V-I** - Jazz turnaround (Dm-G-C)
-4. **I-vi-IV-V** - 50s progression (C-Am-F-G)
-5. **I-IV-I-V** - Blues progression (C-F-C-G)
-6. **vi-IV-I-V** - Sensitive progression (Am-F-C-G)
-7. **I-bVII-IV-I** - Mixolydian (C-Bb-F-C)
-8. **Chromatic** - Ascending chromatic scale (C-C#-D-D#-E-F-F#-G)
-9. **Circle of 5ths** - Circle of fifths sequence (C-G-D-A-E-B-F#-C#)
+0. **I-IV-V-I** - Classic pop/rock progression (C-F-G-C)
+1. **I-V-vi-IV** - Popular progression (C-G-Am-F)
+2. **ii-V-I** - Jazz turnaround (Dm-G-C)
+3. **I-vi-IV-V** - 50s progression (C-Am-F-G)
+4. **I-IV-I-V** - Blues progression (C-F-C-G)
+5. **vi-IV-I-V** - Sensitive progression (Am-F-C-G)
+6. **I-bVII-IV-I** - Mixolydian (C-Bb-F-C)
+7. **Chromatic** - Ascending chromatic scale (C-C#-D-D#-E-F-F#-G)
+8. **Circle of 5ths** - Circle of fifths sequence (C-G-D-A-E-B-F#-C#)
 
 **Note:** Root offsets are relative to the current root (CV In 2 + Knob X). Chord type is still controlled manually via Main Knob.
 
@@ -88,4 +89,4 @@ Copy `chord_organ.uf2` to the Workshop Computer when in bootloader mode.
 
 - **Platform:** Pico SDK (C++), ComputerCard
 - **Sample rate:** 48 kHz
-- **Features:** Glide (50 ms), optional stacked mode (compile-time)
+- **Features:** Glide (50 ms), 4 waveforms, 9 progression patterns
