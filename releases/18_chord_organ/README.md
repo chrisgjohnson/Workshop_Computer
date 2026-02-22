@@ -71,7 +71,6 @@ Requires Pico SDK and (optionally) `PICO_SDK_PATH` set.
 
 **Toolchain:** Arm GCC **15.x** can fail with `cannot find -lg` when linking the Pico SDK boot stage. Use one of:
 
-- **Arm GNU Toolchain 10.3-2021.10** (discontinued embedded): https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads — pick **arm-none-eabi** for your OS; includes `libg.a`.
 - **Arm GNU Toolchain 13.2 or 14.2** from the main downloads page (older releases) — these usually still ship the expected newlib layout.
 
 Install one of the above, put its `bin` directory first in your `PATH`, then build.
