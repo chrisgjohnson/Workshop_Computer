@@ -41,9 +41,53 @@ There are two convenient ways to look at the assembly language instructions that
 Secondly, the online tool [Compiler Explorer](https://godbolt.org/) is helpful for exploring how particular C/C++ constructs compile to assembly language. To generate RP2040 code, use the compiler `ARM GCC xxx (unknown eabi)` with flags `-mthumb -mcpu=cortex-m0 -O2`. Compiler Explorer doesn't know about the RPi Pico SDK or the specifics of the RP2040, so is best for looking at how snippets of user code compile to machine code.
 
 ## Memory
-The memory map is outlined in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) (§2.2) and this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/) is more readable, and has a useful warning about the stack when using two cores.
+The memory map is described in [the datasheet](https://pip-assets.raspberrypi.com/categories/814-rp2040/documents/RP-008371-DS-1-rp2040-datasheet.pdf) §2.2 and §2.6.
 
-The default heap allocator is from [newlib](https://github.com/eblot/newlib/blob/master/newlib/libc/stdlib/mallocr.c), but my experience has been that heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a simple [custom allocator](https://en.wikipedia.org/wiki/Region-based_memory_management) that has greater knowledge of object size and lifetime than a generic heap allocator. 
+The most relevant areas for ComputerCard programming are:
+| Area                     | Start address               | Size        |
+|--------------------------|-----------------------------|-------------|
+| Flash program card (XIP) | `0x10000000`                 | 16MB or 2MB |
+| RAM (striped)            | `0x20000000`                 | 256kB       |
+| RAM (scratch X)          | `0x20040000`                 | 4kB       |
+| RAM (scratch Y)          | `0x20041000`                 | 4kB       |
+
+The data on the flash program card is mapped to address `0x10000000` onwards.
+
+There are several banks of RAM which can be accessed in a variety of ways. Only one part of the chip (e.g. ARM core, DMA access) can access a bank at once, with wait cycles introduced if there is contention for access to a bank. The default strategy for optimising bank access is for the stack of each M0+ core to live in a dedicated 4kB 'scratch' bank and to combine the remaining four 64kB banks into one 'striped' bank starting at `0x20000000`, which contains static data, code that is explicitly copied to RAM, and the heap. Much more detailed information about the allocation for a particular program is available at the top of the `.dis` disassembly file generated in the CMake `build/` directory.
+
+### Heap, stack and stack overflow
+As described in this [blog post](https://petewarden.com/2024/01/16/understanding-the-raspberry-pi-picos-memory-layout/), the stack for the default core 0 starts at the top of scratch bank Y at `0x20041FFF`, and grows downwards. The heap starts near the bottom of the striped RAM section (but above bss/data sections that store global variables, and any code copied to RAM) and grows upwards from (e.g.) `0x20001000`. For single-core operation, the stack of core 0 is free to grow downwards, through the scratch X bank, and into the striped RAM block, so long as it does not crash into the top of the heap. When the second core is in use, the stack for this core starts at the top of scratch X, `0x20040FFF`, and grows downwards. The stack for core 0 must then not exceed 4kB.
+
+Where stack over flow is caused by a few large arrays, the usual solution is to either allocate these on the heap (with `malloc` or `new`) or as global data (in which case they live in the data or bss section). 
+
+In the context of ComputerCard, it's worth noting that
+```
+int main()
+{
+	MyComputerCard mc;
+    mc.Run();
+}
+```
+places the `mc` object on the stack, and so means that, if the second core is to be used, `MyComputerCard` instances must be somewhat smaller than 4kB, . 
+By contrast,
+```
+MyComputerCard mc;
+
+int main()
+{
+    mc.Run();
+}
+```
+places `mc` as a global variable nar the start of the 256kB RAM block, so large statically allocated arrays can be used as members of `MyComputerCard`.
+
+There are a handful of compile-time and run-time tools to help monitor stack usage:
+* Defining `PICO_USE_STACK_GUARDS=1` within a `target_compile_definitions` command in the `CMakeLists.txt` enables a hardware memory protection unit in the RP2040 for lowest 32 bytes in scratch X and Y, causing an immediate crash when the top of the stack is reached, rather than allowing (potentially harder to debug) memory corruption to occur.
+* Adding `-Wstack-usage=<num_bytes>` to the `target_compile_options` in the `CMakeLists.txt` generates a compile-time warning for any function whose stack usage exceeds `<num_bytes>`.
+* Adding `-fstack-usage` to the `target_compile_options` in the `CMakeLists.txt` generates `.su` files within the build directory (`build/CMakeFiles/<projectname>.dir/...`) which show the stack usage for all functions.
+
+### Heap allocation
+
+The default heap allocator is from [newlib](https://github.com/eblot/newlib/blob/master/newlib/libc/stdlib/mallocr.c). This is usually fine for allocating big buffers that just need to be out of the stack space, but my experience has been that repeated or small-object heap allocation (`malloc`/`free` or `new`/`delete`) is not as optimised as one might like on a memory-constrained platform. In particular, this means avoiding libraries that make use of this (such as C++ `<string>`, `<vector>` etc.). The usual advice for small embedded systems is to structure programs to avoid repeated `malloc`/`free`, or using a simple [custom allocator](https://en.wikipedia.org/wiki/Region-based_memory_management) that has greater knowledge of object size and lifetime than a generic heap allocator. 
 
 ## Running code from RAM
 
