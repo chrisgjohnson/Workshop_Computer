@@ -16,7 +16,7 @@ def read_data(file_path):
 # Function to update the README file
 def update_readme(folders_data):
     # Define the desired order of columns
-    desired_order = ['Description', 'Version', 'Language', 'Creator', 'Editor', 'Status']
+    desired_order = ['Description', 'Version', 'Language', 'Creator']
 
     # Identify all unique keys to ensure all columns are included
     all_keys = set()
@@ -37,12 +37,18 @@ def update_readme(folders_data):
     # Create table rows
     sorted_folders = sorted(folders_data.keys())
     for folder in sorted_folders:
-        folders_data[folder]
-        row = [folder] + [str(
-            '[Link]('+folders_data[folder].get(key, '')+')'
-            if key == 'Editor' and len(folders_data[folder].get(key, ''))>0
-            else folders_data[folder].get(key, '')
-        ) for key in ordered_keys]
+        d = folders_data[folder]
+        row = [folder]
+        descr = d.get('Description','')
+        if 'Editor' in d:
+            descr += '<br>[Web editor]('+d.get('Editor','')+')'
+        row += [descr]
+        vers = str(d.get('Version',''))
+        if 'Status' in d:
+            vers += '<br>'+d.get('Status','')
+        row += [vers]
+        row += [d.get('Language','')]
+        row += [d.get('Creator','')]
         new_table.append('| ' + ' | '.join(row) + ' |\n')
 
     # Write the new content to the README.md file
