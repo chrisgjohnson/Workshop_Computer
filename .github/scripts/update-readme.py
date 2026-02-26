@@ -40,7 +40,7 @@ def update_readme(folders_data):
         folders_data[folder]
         row = [folder] + [str(
             '[Link]('+folders_data[folder].get(key, '')+')'
-            if key == 'Editor'
+            if key == 'Editor' and len(folders_data[folder].get(key, ''))>0
             else folders_data[folder].get(key, '')
         ) for key in ordered_keys]
         new_table.append('| ' + ' | '.join(row) + ' |\n')
