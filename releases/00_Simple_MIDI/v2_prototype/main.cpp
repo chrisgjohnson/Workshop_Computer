@@ -123,7 +123,7 @@ public:
 			{
 				AudioOut(i, midiAudioOut[i]);
 				LedBrightness(i, midiAudioOut[i] << 1);
-				// Apply pitch bend: ±2 semitones, pitchbend ±8192 → subNote ±512 (1/256 semitone units)
+				// Apply pitch bend: ±2 semitones, pitchbend ±8192 -> subNote ±512 (1/256 semitone units)
 				int32_t currentPitch = ((int32_t)lastPlayedNote[i] << 8) + (pitchbend[i] >> 4);
 				if (currentPitch < 0) currentPitch = 0;
 				if (currentPitch > (127 << 8)) currentPitch = 127 << 8;
@@ -301,7 +301,7 @@ public:
 						midiGate[ch] = false;
 					}
 				}
-				else if (type == 0xB0 && msg.data1 == 42) // CC42 → audio out
+				else if (type == 0xB0 && msg.data1 == 42) // CC42 -> audio out
 				{
 					midiAudioOut[ch] = (int16_t)(msg.data2 * 16);
 				}
@@ -354,7 +354,7 @@ public:
 		if (!calibrationMode) return;
 		if (size < 3) return;
 
-		// "E|<176 hex chars>|" — write calibration to EEPROM
+		// "E|<176 hex chars>|" - write calibration to EEPROM
 		if (data[0] == 'E' && data[1] == '|' && size >= 179)
 		{
 			auto hexVal = [](uint8_t c) -> uint8_t
@@ -369,7 +369,7 @@ public:
 			return;
 		}
 
-		// "C|<value>|" — set CVOut1Precise
+		// "C|<value>|" - set CVOut1Precise
 		if (data[0] == 'C' && data[1] == '|')
 		{
 			char buf[24];
@@ -380,7 +380,7 @@ public:
 			return;
 		}
 
-		// "C2|<value>|" — set CVOut2Precise
+		// "C2|<value>|" - set CVOut2Precise
 		if (size >= 5 && data[0] == 'C' && data[1] == '2' && data[2] == '|')
 		{
 			char buf[24];

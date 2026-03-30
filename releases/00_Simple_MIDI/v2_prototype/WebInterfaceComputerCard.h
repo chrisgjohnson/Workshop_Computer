@@ -195,7 +195,7 @@ public:
 			}
 			else if (b >= 0x80 && b < 0xF0)
 			{
-				// Channel status byte — set running status
+				// Channel status byte - set running status
 				midiRunningStatus = b;
 				midiDataCount = 0;
 				uint8_t type = b & 0xF0;
@@ -232,7 +232,7 @@ public:
 	// New virtual function, overridden in specific class
 	virtual void ProcessIncomingSysEx(uint8_t *, uint32_t) {} // data, size
 
-	// Host mode callbacks — called from the tuh_midi_*_cb free functions below
+	// Host mode callbacks - called from the tuh_midi_*_cb free functions below
 	void OnMidiHostMount(uint8_t dev_addr)
 	{
 		if (midiDevAddr == 0)
@@ -277,7 +277,7 @@ private:
 };
 
 
-// USB MIDI host callbacks — required by usb_midi_host driver, called from tuh_task()
+// USB MIDI host callbacks - required by usb_midi_host driver, called from tuh_task()
 
 extern "C"
 {
