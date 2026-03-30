@@ -2,9 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-	<meta name="author" content="Chris Johnson">
-	<title>Workshop System Computer</title>
-	<meta name="description" content="Web interface for the Music Thing Modular Workshop System Computer">
+	<title>Simple MIDI Calibration</title>
+	<meta name="description" content="Web interface for the Simple MIDI card of the Music Thing Workshop System Computer">
 
 	<style>
 	  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -15,8 +14,12 @@
 		  color: #111;
 		  min-height: 100vh;
 	  }
-
-	  /* ── Page header ── */
+	  .instrimg
+	  {
+		  display: block;
+		  max-width: 411px;
+		  margin: 0px auto;
+	  }
 	  #pageHeader {
 		  padding: 48px 64px 32px;
 		  border-bottom: 3px solid #111;
@@ -36,7 +39,6 @@
 		  text-transform: uppercase;
 	  }
 
-	  /* ── Connection status ── */
 	  #statusDiv {
 		  position: fixed;
 		  top: 20px;
@@ -48,7 +50,6 @@
 		  color: #aaa;
 	  }
 
-	  /* ── Main content column ── */
 	  #content {
 		  max-width: 700px;
 		  margin: 0 auto;
@@ -58,7 +59,6 @@
 		  gap: 40px;
 	  }
 
-	  /* ── Section label ── */
 	  .section-label {
 		  font-size: 0.7rem;
 		  font-weight: 800;
@@ -68,7 +68,6 @@
 		  margin-bottom: 12px;
 	  }
 
-	  /* ── Oscillator readouts ── */
 	  #oscSection {
 		  display: flex;
 		  flex-direction: column;
@@ -165,7 +164,6 @@
 		  letter-spacing: 0.5px;
 	  }
 
-	  /* ── Action button rows (EEPROM save, next-step prompts) ── */
 	  .eepromPanel, .calNextPanel {
 		  display: none;
 		  align-items: center;
@@ -178,7 +176,6 @@
 		  color: #666;
 	  }
 
-	  /* ── Buttons ── */
 	  button {
 		  appearance: none;
 		  background: #111;
@@ -197,13 +194,11 @@
 	  button:active { background: #000; }
 	  button:disabled { background: #ccc; color: #999; cursor: default; }
 
-	  /* ── Graph ── */
 	  #graphSection {}
 	  canvas {
 		  display: block;
 	  }
 
-	  /* ── Footer note ── */
 	  #footerNote {
 		  font-size: 0.75rem;
 		  color: #bbb;
@@ -222,12 +217,11 @@
 
 	<header id="pageHeader">
 	  <h1>Workshop System Computer</h1>
-	  <p>CV Calibration</p>
+	  <p>CV Out and oscillator calibration</p>
 	</header>
 
 	<div id="content">
 
-	  <!-- Combined calibration protocol: oscillator tracking then CV output calibration -->
 	  <div id="calSection-combined">
 		<span id="calSteps-combined" class="calSteps"></span>
 		<div id="calInstruction-combined" class="calInstruction">Connect the Workshop System Computer via USB </div>

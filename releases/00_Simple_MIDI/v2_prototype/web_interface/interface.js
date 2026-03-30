@@ -7,7 +7,7 @@ var midiActive = false;
 
 var firmwareConnected = false;
 var dMessageTimer = null;
-const D_MESSAGE_TIMEOUT = 300; // ms — disconnect if no D message for this long
+const D_MESSAGE_TIMEOUT = 300; // in ms - disconnect if no D message for this long
 
 async function MIDISetup(interfaceName, onConnect = () => {}, onDisconnect = () => {})
 {
@@ -154,11 +154,11 @@ function updateInitialInstruction()
 	const instrEl = document.getElementById('calInstruction-combined');
 	if (!instrEl) return;
 	if (firmwareConnected)
-		instrEl.innerHTML = 'Remove all patch cables from the Computer, then press <b>Start Calibration</b> to begin.';
+		instrEl.innerHTML = "Remove all patch cables from the Computer, then press <b>Start Calibration</b> to begin.";
 	else if (midiActive)
 		instrEl.innerHTML = 'Wrong card connected &mdash; connect the Workshop System Computer.';
 	else
-		instrEl.innerHTML = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card with the switch held down.';
+		instrEl.innerHTML = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the switch held down.';
 }
 
 function updateStartButtons()
@@ -172,10 +172,11 @@ function ProcessIncomingSysEx(dataBytes)
 {
 	const str = String.fromCharCode(...dataBytes);
 
-	// D|<freq0>|<freq1>|<audio0>|<audio1>|<cv0>|<cv1>  — combined 20ms update
+	// D|<freq0>|<freq1>|<audio0>|<audio1>|<cv0>|<cv1>|<sig0>|<sig1>  - combined 20ms update
 	// freq0/freq1: average period in 256ths of a sample (0 = no signal detected)
 	// audio0/audio1/cv0/cv1: float averages of raw ADC readings (-2048..2047 range)
-	let m = str.match(/^D\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)/);
+	// sig0/sig1: 1 if audio channel has seen |sample| > 500 since last reset, else 0
+	let m = str.match(/^D\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\|(\d)\|(\d)/);
 	if (m)
 	{
 		onDMessage();
@@ -184,14 +185,18 @@ function ProcessIncomingSysEx(dataBytes)
 		if (period0 > 0) updateDisplay1((48000 * 256) / period0);
 		if (period1 > 0) updateDisplay2((48000 * 256) / period1);
 		inputSweepTick([parseFloat(m[3]), parseFloat(m[4]), parseFloat(m[5]), parseFloat(m[6])]);
+		if (m[7] === '1') audio1SigSeen = true;
+		if (m[8] === '1') audio2SigSeen = true;
+		if (calState === CAL.WAIT_AUDIO1 || calState === CAL.WAIT_AUDIO2)
+			handleConnection(conn1, conn2, conn3, conn4);
 		return;
 	}
 
-	// K|<a1>|<a2>|<cv1>|<cv2>|  — jack connection status
+	// K|<a1>|<a2>|<cv1>|<cv2>|  - jack connection status
 	m = str.match(/^K\|(\d)\|(\d)\|(\d)\|(\d)\|/);
 	if (m) { handleConnection(m[1] === '1', m[2] === '1', m[3] === '1', m[4] === '1'); return; }
 
-	// S|  — EEPROM write confirmation from firmware
+	// S|  - EEPROM write confirmation from firmware
 	m = str.match(/^S\|/);
 	if (m)
 	{
@@ -218,7 +223,7 @@ function hzToNote(hz)
 function avg(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
 
 ////////////////////////////////////////////////////////////
-// Calibration — shared constants
+// Calibration - shared constants
 
 const CAL = {
 	IDLE:         'IDLE',
@@ -306,21 +311,21 @@ const CAL_STEP_INFO = {
 		  match: () => calState === CAL.DONE || calState === CAL.LIVE_TRACK },
 	],
 	combined: [
-		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b>.',
+		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b> on the Computer.<img class="instrimg" src="images/toposc_audio1.png">',
 		  match: () => calState === CAL.WAIT_AUDIO1 },
-		{ label: '2', text: 'Connect the <b>bottom oscillator</b> sine output to <b>Audio In 2</b>.',
+		{ label: '2', text: 'Connect the <b>bottom oscillator</b> sine output to <b>Audio In 2</b> on the Computer.<img class="instrimg" src="images/bottomosc_audio2.png">',
 		  match: () => calState === CAL.WAIT_AUDIO2 },
 		{ label: '3', text: 'Use the oscillator knobs to set both oscillators to around <b>C4 (261 Hz)</b>.<br><br>Make sure the FM knobs are fully anti-clockwise<br>and no patch cables are connected to the pitch/FM inputs.<br><br>Waiting for both to be stable in range&hellip;',
 		  match: () => calState === CAL.WAIT_FREQ && combinedPhase === 0 },
-		{ label: '4', text: 'Connect <b>CV Out 1</b> to the <b>top oscillator</b> pitch input&hellip;',
+		{ label: '4', text: 'Connect <b>CV Out 1</b> on the Computer to the <b>top oscillator</b> pitch input&hellip;<img class="instrimg" src="images/toposc_cv1.png">',
 		  match: () => calState === CAL.WAIT_CV1 && combinedPhase === 0 },
 		{ label: '5', text: 'Measuring top oscillator tracking &mdash; do not adjust anything.',
 		  match: () => calState === CAL.TUNING && calChannel === 0 && combinedPhase === 0 },
-		{ label: '6', text: 'Move <b>CV Out 1</b> to the <b>bottom oscillator</b> pitch input&hellip;',
+		{ label: '6', text: 'Move <b>CV Out 1</b> to the <b>bottom oscillator</b> pitch input&hellip;<img class="instrimg" src="images/bottomosc_cv1.png">',
 		  match: () => calState === CAL.WAIT_CV2 && combinedPhase === 0 },
 		{ label: '7', text: () => combinedLiveTrackText(),
 		  match: () => calState === CAL.LIVE_TRACK },
-		{ label: '8', text: 'Move <b>CV Out 1</b> back to the top oscillator pitch input and connect <b>CV Out 2</b> to the bottom oscillator pitch input instead &hellip;',
+		{ label: '8', text: 'Move <b>CV Out 1</b> back to the top oscillator pitch input and connect <b>CV Out 2</b> to the bottom oscillator pitch input instead &hellip;<img class="instrimg" src="images/bothoscs_cv.png">',
 		  match: () => calState === CAL.WAIT_RECABLE },
 		{ label: '9', text: 'Calibrating &mdash; do not adjust anything.',
 		  match: () => calState === CAL.TUNING && combinedPhase === 1 },
@@ -465,7 +470,7 @@ function startPhase2()
 	// Called automatically when CV Out 2 is detected on the bottom oscillator.
 	// Both connections are already confirmed (CV Out 1 from osctracking, CV Out 2 just detected),
 	// so skip the cvTest confirmation steps and go straight to calibration.
-	// baseHz[] is kept from the osctracking phase — oscillators are still at the same pitch.
+	// baseHz[] is kept from the osctracking phase - oscillators are still at the same pitch.
 	combinedPhase = 1;
 	calChannel    = 0;
 	calState      = CAL.TUNING;
@@ -578,7 +583,7 @@ function inputStepText(i)
 }
 
 ////////////////////////////////////////////////////////////
-// Calibration — shared mutable state
+// Calibration - shared mutable state
 
 let calMode       = null;   // 'workshop' | 'trusted' | 'inputs' | 'combined' | null when IDLE
 let calState      = CAL.IDLE;
@@ -586,6 +591,8 @@ let calChannel    = 0;
 let combinedPhase = 0;     // 0 = osctracking phase, 1 = workshop calibration phase
 
 let conn1 = false, conn2 = false, conn3 = false, conn4 = false;
+let audio1SigSeen = false; // Audio In 1 has seen a D message value with signal
+let audio2SigSeen = false; // Audio In 2 has seen a D message value with signal
 let latestHz1 = 0, latestHz2 = 0;
 
 let freqBuf = [[], []];  // rolling Hz windows per channel for WAIT_FREQ
@@ -632,7 +639,7 @@ function sendCV(channel, val)
 }
 
 ////////////////////////////////////////////////////////////
-// Wobble — sweeps CV during WAIT_FREQ so any accidental CV connection
+// Wobble - sweeps CV during WAIT_FREQ so any accidental CV connection
 // produces obvious pitch wobble and prevents the oscillator settling in range
 
 let wobbleTimer = null;
@@ -705,7 +712,9 @@ function startCalibration(mode)
 	}
 	else
 	{
-		calState = CAL.WAIT_AUDIO1;
+		calState      = CAL.WAIT_AUDIO1;
+		audio1SigSeen = false;
+		audio2SigSeen = false;
 	}
 
 	updateCalUI();
@@ -713,7 +722,7 @@ function startCalibration(mode)
 }
 
 ////////////////////////////////////////////////////////////
-// Connection detection (jack normalisation probe) — pitch modes only
+// Connection detection (jack normalisation probe) - pitch modes only
 
 function handleConnection(a1, a2, cv1, cv2)
 {
@@ -722,11 +731,11 @@ function handleConnection(a1, a2, cv1, cv2)
 	conn3 = cv1;
 	conn4 = cv2;
 
-	if (calState === CAL.WAIT_AUDIO1 && conn1)
+	if (calState === CAL.WAIT_AUDIO1 && conn1 && audio1SigSeen)
 	{
 		if (calMode === 'trusted')
 		{
-			// Trusted mode uses only Audio In 1 — skip straight to frequency wait
+			// Trusted mode uses only Audio In 1 - skip straight to frequency wait
 			calState = CAL.WAIT_FREQ;
 			freqBuf  = [[], []];
 			startWobble();
@@ -737,7 +746,7 @@ function handleConnection(a1, a2, cv1, cv2)
 		}
 		updateCalUI();
 	}
-	else if (calState === CAL.WAIT_AUDIO2 && conn1 && conn2)
+	else if (calState === CAL.WAIT_AUDIO2 && conn1 && conn2 && audio2SigSeen)
 	{
 		calState = CAL.WAIT_FREQ;
 		freqBuf  = [[], []];
@@ -922,7 +931,7 @@ function cvTestTick(hz, channel)
 		{
 			if (calMode === 'combined' && calState === CAL.WAIT_RECABLE)
 		{
-			// CV Out 2 confirmed on bottom oscillator — begin calibration phase
+			// CV Out 2 confirmed on bottom oscillator - begin calibration phase
 			startPhase2();
 		}
 		else if (channel === 0 && (calMode === 'workshop' || (calMode === 'combined' && combinedPhase === 1)))
@@ -941,7 +950,7 @@ function cvTestTick(hz, channel)
 				}
 				else
 				{
-					// Osctracking phase: CV Out 1 confirmed on bottom osc → sweep ch1 audio
+					// Osctracking phase: CV Out 1 confirmed on bottom osc -> sweep ch1 audio
 					calState   = CAL.TUNING;
 					calChannel = 1;
 					startCalSweep();
@@ -949,7 +958,7 @@ function cvTestTick(hz, channel)
 			}
 			else if (channel === 1 && (calMode === 'workshop' || (calMode === 'combined' && combinedPhase === 1)))
 			{
-				// Workshop / combined phase 1: both cables confirmed — start ch0 sweep
+				// Workshop / combined phase 1: both cables confirmed - start ch0 sweep
 				calState   = CAL.TUNING;
 				calChannel = 0;
 				startCalSweep();
@@ -1194,7 +1203,7 @@ function makeLiveTrackSlider(alpha1, alpha2live)
 }
 
 ////////////////////////////////////////////////////////////
-// UI update — targets the active mode's panel elements
+// UI update - targets the active mode's panel elements
 
 function updateCalUI()
 {
@@ -1605,7 +1614,7 @@ function drawInputResiduals()
 	const toX = v  => pad.l + (v - xLo) / (xHi - xLo) * (AT_W - pad.l - pad.r);
 	const toY = r  => AT_RES_H - pad.b - (r - rLo) / (rHi - rLo) * (AT_RES_H - pad.t - pad.b);
 
-	// Y grid — choose a sensible tick step
+	// Y grid - choose a sensible tick step
 	const rRange   = rHi - rLo;
 	const tickStep = rRange <= 10 ? 1 : rRange <= 50 ? 5 : rRange <= 100 ? 10 : 20;
 	ctx.font = '10px monospace';
@@ -1619,7 +1628,7 @@ function drawInputResiduals()
 		ctx.fillText(`${c >= 0 ? '+' : ''}${c}`, 2, y + 3);
 	}
 
-	// X grid — voltage reference lines at whole volts
+	// X grid - voltage reference lines at whole volts
 	ctx.fillStyle = '#444'; ctx.font = '10px monospace';
 	for (let v = Math.ceil(xLo); v <= Math.floor(xHi); v++)
 	{
@@ -1663,9 +1672,9 @@ function drawInputResiduals()
 }
 
 ////////////////////////////////////////////////////////////
-// EEPROM calibration save (pitch modes only — input mode TBD)
+// EEPROM calibration save (pitch modes only - input mode TBD)
 
-// CRC-CCITT (poly 0x1021, init 0xFFFF) — matches firmware CRCencode()
+// CRC-CCITT (poly 0x1021, init 0xFFFF) - matches firmware CRCencode()
 function crcCCITT(buf)
 {
 	let crc = 0xFFFF;
@@ -1736,7 +1745,7 @@ function saveCalToEEPROM()
 		const { slope, intercept } = linReg(cvs, l2hz);
 		const points = buildChannelCalPoints(slope, intercept, baseHz[ch]);
 
-		let off = 4 + 41 * ch;  // channel 0 → byte 4, channel 1 → byte 45
+		let off = 4 + 41 * ch;  // channel 0 -> byte 4, channel 1 -> byte 45
 		buf[off++] = points.length;
 		for (const p of points)
 		{

@@ -109,6 +109,10 @@ public:
 					}
 				}
 
+				// Track peak absolute value for signal-presence detection
+				int32_t absSample = sample < 0 ? -sample : sample;
+				if (absSample > rawMaxAbs[i]) rawMaxAbs[i] = absSample;
+
 				// Accumulate raw inputs, used for CV in calibration
 				rawSum[i] += sample;
 				rawCount[i]++;
@@ -247,10 +251,15 @@ public:
 				a[i] = (n > 0) ? ((float)s / (float)n) : 0.0f;
 				cv[i] = (ncv > 0) ? ((float)scv / (float)ncv) : 0.0f;
 			}
-			int len = snprintf(buf, sizeof(buf), "D|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f",
+			int sig0 = rawMaxAbs[0] > 500 ? 1 : 0;
+			int sig1 = rawMaxAbs[1] > 500 ? 1 : 0;
+			rawMaxAbs[0] = 0;
+			rawMaxAbs[1] = 0;
+			int len = snprintf(buf, sizeof(buf), "D|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%d|%d",
 			                   (double)freq[0], (double)freq[1],
 			                   (double)a[0], (double)a[1],
-			                   (double)cv[0], (double)cv[1]);
+			                   (double)cv[0], (double)cv[1],
+			                   sig0, sig1);
 			SendSysEx((uint8_t *)buf, (uint32_t)len);
 
 			lastTimingSend = now;
@@ -394,6 +403,7 @@ public:
 
 	volatile int32_t durationSum[2], durationCount[2];
 	volatile int32_t rawSum[2], rawCount[2], rawSumCv[2], rawCountCv[2];
+	volatile int32_t rawMaxAbs[2] = { 0, 0 }; // peak |sample| in current D-message window
 
 	RisingEdgeCounter rec[2];
 
