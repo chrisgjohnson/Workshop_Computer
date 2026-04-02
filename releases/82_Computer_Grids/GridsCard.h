@@ -7,6 +7,7 @@
 #include "ComputerCard.h"
 #include "ConfigStore.h"
 #include "GridsEngine.h"
+#include "pico/critical_section.h"
 
 class GridsCard : public ComputerCard {
  public:
@@ -41,11 +42,16 @@ class GridsCard : public ComputerCard {
   void HandleIncomingSysEx();
   void SendConfigSysEx();
   void ReceiveConfigSysEx(const uint8_t* payload, size_t len);
+  void MarkConfigDirty();
+  static void SanitizeConfig(ConfigStore::Data& cfg);
   uint16_t CurrentPulseSamples() const;
   bool ExternalClockActive();
 
   ConfigStore store_;
-  ConfigStore::Data* cfg_ = nullptr;
+  ConfigStore::Data cfg_{};
+  ConfigStore::Data pending_sysex_cfg_{};
+  critical_section_t cfg_cs_{};
+  bool pending_sysex_cfg_valid_ = false;
   GridsEngine engine_;
 
   RuntimeParams normal_params_{};

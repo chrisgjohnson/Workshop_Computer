@@ -12,7 +12,8 @@
   <main>
     <h1>82_Computer_Grids Web Config</h1>
     <p class="hint">
-      Use a Chromium-based browser with Web MIDI enabled. This tool sends SysEx to device <code>0x63</code>.
+      Use a USB-C data cable, close any Serial Monitor/MIDI app using the device, and use a Chromium-based browser with Web MIDI
+      SysEx enabled. iOS browsers are generally unsupported.
     </p>
 
     <section class="card">
@@ -26,7 +27,8 @@
       </div>
       <div class="row row--actions">
         <button id="readBtn" type="button" class="midi-action">Read From Device</button>
-        <button id="writeBtn" type="button" class="midi-action">Write To Device</button>
+        <button id="applyBtn" type="button" class="midi-action">Apply To Device</button>
+        <button id="saveBtn" type="button" class="midi-action">Save To Card</button>
         <button id="defaultsBtn" type="button" class="midi-action">Load Defaults</button>
       </div>
       <p id="status">Not connected.</p>

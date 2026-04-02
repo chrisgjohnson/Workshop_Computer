@@ -8,14 +8,15 @@
     "commands": {
       "get_config_request": "0x01",
       "get_config_response": "0x02",
-      "set_config_request": "0x03"
+      "set_config_request": "0x03",
+      "save_config_request": "0x04"
     },
     "frame": [
       "0xF0",
       "manufacturer_id",
       "device_id",
       "command",
-      "payload",
+      "payload (optional for command)",
       "0xF7"
     ]
   },

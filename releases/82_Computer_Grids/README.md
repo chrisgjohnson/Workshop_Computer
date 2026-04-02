@@ -107,10 +107,17 @@ A basic web editor is included in:
 Open it in a Chromium-based browser, click **Connect Web MIDI**, select the card MIDI input/output, then use:
 
 - **Read From Device** - requests config via SysEx (`0x01`)
-- **Write To Device** - sends current UI values via SysEx (`0x03`)
+- **Apply To Device** - sends current UI values via SysEx (`0x03`) to update running behavior
+- **Save To Card** - requests persistence to flash via SysEx (`0x04`)
 - **Start Monitor** - periodically polls current config and updates the UI
 
 The web UI includes paired sliders + numeric fields for main continuous parameters.
+
+Connection notes:
+
+- Use a USB-C **data** cable.
+- Close Serial Monitor / other apps that may already own the device/MIDI port.
+- Use a Chromium-family browser with Web MIDI SysEx enabled (iOS browsers are generally unsupported).
 
 The GUI implements the same 7-bit block packing scheme documented in `sysex_spec.json`.
 

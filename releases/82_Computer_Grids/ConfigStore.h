@@ -42,6 +42,7 @@ class ConfigStore {
 
   void Load(bool force_reset = false);
   void Save();
+  void SaveData(const Data& data);
   Data& Get();
 
  private:

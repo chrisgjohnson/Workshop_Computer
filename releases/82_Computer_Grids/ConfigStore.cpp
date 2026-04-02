@@ -38,6 +38,11 @@ void ConfigStore::Save() {
   restore_interrupts(ints);
 }
 
+void ConfigStore::SaveData(const Data& data) {
+  config_ = data;
+  Save();
+}
+
 ConfigStore::Data& ConfigStore::Get() {
   return config_;
 }

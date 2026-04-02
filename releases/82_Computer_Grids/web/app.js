@@ -5,6 +5,7 @@ const DEVICE = 0x63;
 const CMD_GET = 0x01;
 const CMD_GET_RESP = 0x02;
 const CMD_SET = 0x03;
+const CMD_SAVE = 0x04;
 
 const DEFAULTS = {
   magic: 0x47524453,
@@ -34,7 +35,8 @@ const state = {
 };
 
 let readPendingTimer = null;
-let writeFlashTimer = null;
+let applyFlashTimer = null;
+let saveFlashTimer = null;
 let defaultsFlashTimer = null;
 
 const fields = [
@@ -84,13 +86,23 @@ function setReadPending() {
   }, 8000);
 }
 
-function flashWriteDone() {
-  clearTimeout(writeFlashTimer);
-  const btn = byId("writeBtn");
+function flashApplyDone() {
+  clearTimeout(applyFlashTimer);
+  const btn = byId("applyBtn");
   btn.classList.add("is-done");
-  writeFlashTimer = setTimeout(() => {
+  applyFlashTimer = setTimeout(() => {
     btn.classList.remove("is-done");
-    writeFlashTimer = null;
+    applyFlashTimer = null;
+  }, 1600);
+}
+
+function flashSaveDone() {
+  clearTimeout(saveFlashTimer);
+  const btn = byId("saveBtn");
+  btn.classList.add("is-done");
+  saveFlashTimer = setTimeout(() => {
+    btn.classList.remove("is-done");
+    saveFlashTimer = null;
   }, 1600);
 }
 
@@ -462,7 +474,7 @@ function init() {
     setReadPending();
     sendSysEx(CMD_GET);
   });
-  byId("writeBtn").addEventListener("click", () => {
+  byId("applyBtn").addEventListener("click", () => {
     if (!state.output) {
       setStatus("No MIDI output selected.");
       return;
@@ -470,8 +482,17 @@ function init() {
     const raw = encodeStruct(getConfigFromForm());
     const payload = encode7Bit(raw);
     sendSysEx(CMD_SET, payload);
-    setStatus("Config sent to device.");
-    flashWriteDone();
+    setStatus("Config applied to running behavior (not yet persisted).");
+    flashApplyDone();
+  });
+  byId("saveBtn").addEventListener("click", () => {
+    if (!state.output) {
+      setStatus("No MIDI output selected.");
+      return;
+    }
+    sendSysEx(CMD_SAVE);
+    setStatus("Save request sent to card.");
+    flashSaveDone();
   });
   byId("exportBtn").addEventListener("click", exportJSON);
   byId("defaultsBtn").addEventListener("click", loadDefaults);

@@ -20,6 +20,7 @@ constexpr uint8_t kManufacturer = 0x7D;
 constexpr uint8_t kDevice = 0x63;  // local card id
 constexpr uint8_t kCmdGetConfig = 0x01;
 constexpr uint8_t kCmdSetConfig = 0x03;
+constexpr uint8_t kCmdSaveConfig = 0x04;
 constexpr uint32_t kLongPressSamples = 24000;
 constexpr uint32_t kPickupDeadband = 96;
 
@@ -58,22 +59,42 @@ size_t Decode7Bit(const uint8_t* in, size_t in_len, uint8_t* raw, size_t raw_max
   }
   return raw_idx;
 }
+
+template <typename T>
+T Clamp(T value, T lo, T hi) {
+  if (value < lo) return lo;
+  if (value > hi) return hi;
+  return value;
+}
 }  // namespace
 
 GridsCard::GridsCard() {
   store_.Load(false);
-  cfg_ = &store_.Get();
+  critical_section_init(&cfg_cs_);
+  cfg_ = store_.Get();
+  SanitizeConfig(cfg_);
   engine_.Seed(static_cast<uint32_t>(UniqueCardID()));
-  samples_per_tick_ = (kSampleRate * 600U) / (cfg_->bpm10 * 4U);
+  samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
   if (samples_per_tick_ == 0) samples_per_tick_ = 1;
 
   normal_params_.fill = 2048;
-  alt_params_.fill = cfg_->chaos * 32;
-  alt_params_.x = cfg_->bpm10;
-  alt_params_.y = cfg_->swing * 16;
+  alt_params_.fill = cfg_.chaos * 32;
+  alt_params_.x = cfg_.bpm10;
+  alt_params_.y = cfg_.swing * 16;
 }
 
 void GridsCard::ProcessSample() {
+  if (pending_sysex_cfg_valid_) {
+    critical_section_enter_blocking(&cfg_cs_);
+    if (pending_sysex_cfg_valid_) {
+      cfg_ = pending_sysex_cfg_;
+      pending_sysex_cfg_valid_ = false;
+    }
+    critical_section_exit(&cfg_cs_);
+    samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
+    if (samples_per_tick_ == 0) samples_per_tick_ = 1;
+  }
+
   sample_count_++;
   TickUiAndSwitch();
   TickPulseTimers();
@@ -97,7 +118,7 @@ void GridsCard::ProcessSample() {
     const uint16_t x = static_cast<uint16_t>(normal_params_.x);
     const uint16_t y = static_cast<uint16_t>(normal_params_.y);
     const uint16_t fill = static_cast<uint16_t>(normal_params_.fill);
-    const auto outputs = engine_.Tick(x, y, fill, cfg_->chaos);
+    const auto outputs = engine_.Tick(x, y, fill, cfg_.chaos);
     TriggerOutputs(outputs);
     beat_led_countdown_ = CurrentPulseSamples();
   }
@@ -117,9 +138,18 @@ void GridsCard::Housekeeping() {
   HandleTapTempo();
   HandleIncomingSysEx();
 
+  bool should_save = false;
+  ConfigStore::Data snapshot{};
+  critical_section_enter_blocking(&cfg_cs_);
   if (pending_save_ && (time_us_64() - last_change_us_) > 1500000ULL) {
-    store_.Save();
+    snapshot = cfg_;
     pending_save_ = false;
+    should_save = true;
+  }
+  critical_section_exit(&cfg_cs_);
+
+  if (should_save) {
+    store_.SaveData(snapshot);
   }
 }
 
@@ -146,10 +176,11 @@ void GridsCard::TickUiAndSwitch() {
           if (last_tap_sample_ != 0 && dt > 2000 && dt < 48000 * 2) {
             const uint32_t bpm10 = (kSampleRate * 600U) / dt;
             if (bpm10 >= 400 && bpm10 <= 2600) {
-              cfg_->bpm10 = static_cast<uint16_t>(bpm10);
-              samples_per_tick_ = (kSampleRate * 600U) / (cfg_->bpm10 * 4U);
-              pending_save_ = true;
-              last_change_us_ = time_us_64();
+              critical_section_enter_blocking(&cfg_cs_);
+              cfg_.bpm10 = static_cast<uint16_t>(bpm10);
+              critical_section_exit(&cfg_cs_);
+              samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
+              MarkConfigDirty();
             }
           }
           last_tap_sample_ = now;
@@ -196,16 +227,16 @@ void GridsCard::RefreshRuntimeParams() {
     int32_t fill = active.fill;
 
     if (Connected(CV1)) {
-      const int32_t cv1 = (CVIn1() * cfg_->cv1_amount) / 64;
-      if (cfg_->cv1_mode == ConfigStore::CV1ToX) x += cv1;
-      if (cfg_->cv1_mode == ConfigStore::CV1ToY) y += cv1;
-      if (cfg_->cv1_mode == ConfigStore::CV1ToBlend) {
+      const int32_t cv1 = (CVIn1() * cfg_.cv1_amount) / 64;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToX) x += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToY) y += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToBlend) {
         x += cv1 / 2;
         y += cv1 / 2;
       }
     }
     if (Connected(CV2)) {
-      fill += (CVIn2() * cfg_->cv2_amount) / 64;
+      fill += (CVIn2() * cfg_.cv2_amount) / 64;
     }
 
     if (x < 0) x = 0;
@@ -220,26 +251,27 @@ void GridsCard::RefreshRuntimeParams() {
 
     // Macro fill drives 3 lanes through preconfigured scaling.
     const int32_t laneBlend =
-        ((fill * cfg_->lane1_fill_scale) + (fill * cfg_->lane2_fill_scale) + (fill * cfg_->lane3_fill_scale)) / 300;
-    int32_t blended = laneBlend + cfg_->lane1_fill_offset + cfg_->lane2_fill_offset + cfg_->lane3_fill_offset;
+        ((fill * cfg_.lane1_fill_scale) + (fill * cfg_.lane2_fill_scale) + (fill * cfg_.lane3_fill_scale)) / 300;
+    int32_t blended = laneBlend + cfg_.lane1_fill_offset + cfg_.lane2_fill_offset + cfg_.lane3_fill_offset;
     if (blended < 0) blended = 0;
     if (blended > 4095) blended = 4095;
     normal_params_.fill = blended;
   } else {
     // Alt layer edits advanced params.
-    cfg_->chaos = static_cast<uint8_t>(alt_params_.fill >> 5);
-    if (cfg_->chaos > 127) cfg_->chaos = 127;
-    cfg_->bpm10 = static_cast<uint16_t>(600 + (alt_params_.x * 2000) / 4095);
-    cfg_->swing = static_cast<uint8_t>((alt_params_.y * 100) / 4095);
-    samples_per_tick_ = (kSampleRate * 600U) / (cfg_->bpm10 * 4U);
+    critical_section_enter_blocking(&cfg_cs_);
+    cfg_.chaos = static_cast<uint8_t>(alt_params_.fill >> 5);
+    if (cfg_.chaos > 127) cfg_.chaos = 127;
+    cfg_.bpm10 = static_cast<uint16_t>(600 + (alt_params_.x * 2000) / 4095);
+    cfg_.swing = static_cast<uint8_t>((alt_params_.y * 100) / 4095);
+    critical_section_exit(&cfg_cs_);
+    samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
     if (samples_per_tick_ == 0) samples_per_tick_ = 1;
-    pending_save_ = true;
-    last_change_us_ = time_us_64();
+    MarkConfigDirty();
   }
 }
 
 uint16_t GridsCard::CurrentPulseSamples() const {
-  const uint32_t ms = cfg_->pulse_ms ? cfg_->pulse_ms : 10;
+  const uint32_t ms = cfg_.pulse_ms ? cfg_.pulse_ms : 10;
   return static_cast<uint16_t>((kSampleRate * ms) / 1000);
 }
 
@@ -249,9 +281,9 @@ void GridsCard::TriggerOutputs(const GridsEngine::Outputs& out) {
   if (out.lane2) pulse_2_countdown_ = len;
   if (out.lane3) cv1_pulse_countdown_ = len;
 
-  if (cfg_->aux_mode == ConfigStore::AuxAccent && out.accent) cv2_pulse_countdown_ = len;
-  if (cfg_->aux_mode == ConfigStore::AuxClock) cv2_pulse_countdown_ = len;
-  if (cfg_->aux_mode == ConfigStore::AuxLane3Mirror && out.lane3) cv2_pulse_countdown_ = len;
+  if (cfg_.aux_mode == ConfigStore::AuxAccent && out.accent) cv2_pulse_countdown_ = len;
+  if (cfg_.aux_mode == ConfigStore::AuxClock) cv2_pulse_countdown_ = len;
+  if (cfg_.aux_mode == ConfigStore::AuxLane3Mirror && out.lane3) cv2_pulse_countdown_ = len;
 }
 
 void GridsCard::TickPulseTimers() {
@@ -272,19 +304,25 @@ void GridsCard::HandleIncomingSysEx() {
   static uint8_t packet[256];
   while (tud_midi_available()) {
     const size_t len = tud_midi_stream_read(packet, sizeof(packet));
-    if (len < 6 || packet[0] != kSysExStart || packet[len - 1] != kSysExEnd) continue;
+    if (len < 5 || packet[0] != kSysExStart || packet[len - 1] != kSysExEnd) continue;
     if (packet[1] != kManufacturer || packet[2] != kDevice) continue;
     const uint8_t cmd = packet[3];
     if (cmd == kCmdGetConfig) {
       SendConfigSysEx();
-    } else if (cmd == kCmdSetConfig) {
+    } else if (cmd == kCmdSetConfig && len >= 6) {
       ReceiveConfigSysEx(&packet[4], len - 5);
+    } else if (cmd == kCmdSaveConfig) {
+      MarkConfigDirty();
     }
   }
 }
 
 void GridsCard::SendConfigSysEx() {
-  const uint8_t* raw = reinterpret_cast<const uint8_t*>(cfg_);
+  ConfigStore::Data snapshot{};
+  critical_section_enter_blocking(&cfg_cs_);
+  snapshot = cfg_;
+  critical_section_exit(&cfg_cs_);
+  const uint8_t* raw = reinterpret_cast<const uint8_t*>(&snapshot);
   const size_t raw_len = sizeof(ConfigStore::Data);
   uint8_t msg[192] = {};
   size_t out = 0;
@@ -305,9 +343,43 @@ void GridsCard::ReceiveConfigSysEx(const uint8_t* payload, size_t len) {
   ConfigStore::Data incoming;
   std::memcpy(&incoming, decoded, sizeof(incoming));
   if (incoming.magic != ConfigStore::kMagic) return;
+  SanitizeConfig(incoming);
   incoming.version = ConfigStore::kVersion;
-  *cfg_ = incoming;
+  critical_section_enter_blocking(&cfg_cs_);
+  pending_sysex_cfg_ = incoming;
+  pending_sysex_cfg_valid_ = true;
+  critical_section_exit(&cfg_cs_);
+}
+
+void GridsCard::MarkConfigDirty() {
+  critical_section_enter_blocking(&cfg_cs_);
   pending_save_ = true;
   last_change_us_ = time_us_64();
+  critical_section_exit(&cfg_cs_);
+}
+
+void GridsCard::SanitizeConfig(ConfigStore::Data& cfg) {
+  cfg.magic = ConfigStore::kMagic;
+  cfg.version = ConfigStore::kVersion;
+  cfg.bpm10 = Clamp<uint16_t>(cfg.bpm10, 400, 2600);
+  cfg.swing = Clamp<uint8_t>(cfg.swing, 0, 100);
+  cfg.chaos = Clamp<uint8_t>(cfg.chaos, 0, 127);
+  cfg.cv1_mode = (cfg.cv1_mode <= static_cast<uint8_t>(ConfigStore::CV1ToBlend))
+                     ? cfg.cv1_mode
+                     : static_cast<uint8_t>(ConfigStore::CV1ToBlend);
+  cfg.cv2_mode = ConfigStore::CV2ToFill;
+  cfg.cv1_amount = Clamp<int8_t>(cfg.cv1_amount, -127, 127);
+  cfg.cv2_amount = Clamp<int8_t>(cfg.cv2_amount, -127, 127);
+  cfg.lane1_fill_scale = Clamp<uint8_t>(cfg.lane1_fill_scale, 0, 200);
+  cfg.lane2_fill_scale = Clamp<uint8_t>(cfg.lane2_fill_scale, 0, 200);
+  cfg.lane3_fill_scale = Clamp<uint8_t>(cfg.lane3_fill_scale, 0, 200);
+  cfg.lane1_fill_offset = Clamp<int8_t>(cfg.lane1_fill_offset, -127, 127);
+  cfg.lane2_fill_offset = Clamp<int8_t>(cfg.lane2_fill_offset, -127, 127);
+  cfg.lane3_fill_offset = Clamp<int8_t>(cfg.lane3_fill_offset, -127, 127);
+  cfg.aux_mode = (cfg.aux_mode <= static_cast<uint8_t>(ConfigStore::AuxLane3Mirror))
+                     ? cfg.aux_mode
+                     : static_cast<uint8_t>(ConfigStore::AuxAccent);
+  cfg.pulse_ms = Clamp<uint8_t>(cfg.pulse_ms, 1, 40);
+  for (size_t i = 0; i < sizeof(cfg.reserved); ++i) cfg.reserved[i] = 0;
 }
 
