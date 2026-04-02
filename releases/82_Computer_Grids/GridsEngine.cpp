@@ -49,10 +49,11 @@ uint8_t GridsEngine::ReadDrumMap(uint8_t step, uint8_t instrument, uint8_t x, ui
   return MixU8(MixU8(a, b, xMix), MixU8(c, d, xMix), yMix);
 }
 
-GridsEngine::Outputs GridsEngine::Tick(uint16_t x, uint16_t y, uint16_t fill, uint8_t chaos) {
-  const uint8_t x8 = static_cast<uint8_t>(x >> 4);
-  const uint8_t y8 = static_cast<uint8_t>(y >> 4);
-  const uint8_t density = static_cast<uint8_t>(fill >> 4);
+GridsEngine::Outputs GridsEngine::Tick(uint16_t map_x, uint16_t map_y, uint16_t fill_lane1, uint16_t fill_lane2,
+                                       uint16_t fill_lane3, uint8_t chaos) {
+  const uint8_t x8 = static_cast<uint8_t>(map_x >> 4);
+  const uint8_t y8 = static_cast<uint8_t>(map_y >> 4);
+  const uint16_t fills[3] = {fill_lane1, fill_lane2, fill_lane3};
 
   if (step_ == 0) {
     const uint8_t randomness = chaos << 1;
@@ -71,6 +72,7 @@ GridsEngine::Outputs GridsEngine::Tick(uint16_t x, uint16_t y, uint16_t fill, ui
     } else {
       level = 255;
     }
+    const uint8_t density = static_cast<uint8_t>(fills[instrument] >> 4);
     const uint8_t threshold = static_cast<uint8_t>(~density);
     const bool hit = level > threshold;
     if (hit && level > 192) {

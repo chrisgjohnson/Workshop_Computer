@@ -29,6 +29,9 @@ class GridsCard : public ComputerCard {
     int32_t x = 0;
     int32_t y = 0;
     int32_t fill = 0;
+    /** Per-lane density (macro mode sets all three equal to blended fill). */
+    int32_t lane2_fill = 2048;
+    int32_t lane3_fill = 2048;
   };
 
   static constexpr uint32_t kSampleRate = 48000;
@@ -66,10 +69,32 @@ class GridsCard : public ComputerCard {
   uint32_t next_tick_at_ = 0;
   uint32_t last_tap_sample_ = 0;
 
-  bool switch_down_ = false;
   uint32_t switch_down_start_ = 0;
   bool long_press_consumed_ = false;
-  bool last_switch_changed_ = false;
+
+  /** Debounced Z (reduces bounce + wrong mode while holding momentary Down). */
+  static constexpr uint16_t kZDebounceSamples = 200;
+  Switch z_filtered_ = Switch::Middle;
+  Switch z_pending_ = Switch::Middle;
+  uint16_t z_debounce_count_ = 0;
+
+  /** Middle ↔ Up: keep audio params until the corresponding knob moves past deadband. */
+  int32_t persist_blended_ = 2048;
+  int32_t persist_d1_ = 2048;
+  int32_t persist_d2_ = 2048;
+  int32_t persist_d3_ = 2048;
+  int32_t persist_map_x_ = 2048;
+  int32_t persist_map_y_ = 2048;
+  int32_t knob_base_main_ = 0;
+  int32_t knob_base_x_ = 0;
+  int32_t knob_base_y_ = 0;
+  bool knob_live_main_ = true;
+  bool knob_live_x_ = true;
+  bool knob_live_y_ = true;
+
+  /** Pattern map used when Z is Up (Main/X/Y are per-lane density). Updated in normal (middle) mode. */
+  int32_t held_map_x_ = 2048;
+  int32_t held_map_y_ = 2048;
 
   uint16_t pulse_1_countdown_ = 0;
   uint16_t pulse_2_countdown_ = 0;

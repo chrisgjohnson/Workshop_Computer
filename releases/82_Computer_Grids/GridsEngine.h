@@ -13,7 +13,9 @@ class GridsEngine {
 
   void Seed(uint32_t seed);
   void Reset();
-  Outputs Tick(uint16_t x, uint16_t y, uint16_t fill, uint8_t chaos);
+  /** map_x/map_y select the pattern node; each lane uses its own fill (0–4095 → density). */
+  Outputs Tick(uint16_t map_x, uint16_t map_y, uint16_t fill_lane1, uint16_t fill_lane2, uint16_t fill_lane3,
+               uint8_t chaos);
 
  private:
   uint8_t ReadDrumMap(uint8_t step, uint8_t instrument, uint8_t x, uint8_t y) const;

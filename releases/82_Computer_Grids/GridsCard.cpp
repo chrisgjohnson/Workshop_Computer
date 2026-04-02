@@ -1,5 +1,7 @@
 #include "GridsCard.h"
 
+#include <cstdlib>
+
 #include <cstring>
 
 #include "pico/time.h"
@@ -78,9 +80,15 @@ GridsCard::GridsCard() {
   if (samples_per_tick_ == 0) samples_per_tick_ = 1;
 
   normal_params_.fill = 2048;
+  normal_params_.lane2_fill = 2048;
+  normal_params_.lane3_fill = 2048;
   alt_params_.fill = cfg_.chaos * 32;
   alt_params_.x = cfg_.bpm10;
   alt_params_.y = cfg_.swing * 16;
+
+  const Switch z0 = SwitchVal();
+  z_filtered_ = z0;
+  z_pending_ = z0;
 }
 
 void GridsCard::ProcessSample() {
@@ -115,21 +123,35 @@ void GridsCard::ProcessSample() {
 
   if (fire_tick) {
     RefreshRuntimeParams();
-    const uint16_t x = static_cast<uint16_t>(normal_params_.x);
-    const uint16_t y = static_cast<uint16_t>(normal_params_.y);
-    const uint16_t fill = static_cast<uint16_t>(normal_params_.fill);
-    const auto outputs = engine_.Tick(x, y, fill, cfg_.chaos);
+    const uint16_t map_x = static_cast<uint16_t>(normal_params_.x);
+    const uint16_t map_y = static_cast<uint16_t>(normal_params_.y);
+    uint16_t f1 = static_cast<uint16_t>(normal_params_.fill);
+    uint16_t f2 = static_cast<uint16_t>(normal_params_.lane2_fill);
+    uint16_t f3 = static_cast<uint16_t>(normal_params_.lane3_fill);
+    const bool z_density_tick = (z_filtered_ == Switch::Up);
+    if (alt_layer_ && !z_density_tick) {
+      f1 = f2 = f3 = static_cast<uint16_t>(normal_params_.fill);
+    }
+    const auto outputs = engine_.Tick(map_x, map_y, f1, f2, f3, cfg_.chaos);
     TriggerOutputs(outputs);
     beat_led_countdown_ = CurrentPulseSamples();
   }
 
+  const bool z_density = (z_filtered_ == Switch::Up);
+
   // Drive LEDs from audio core to avoid cross-core display glitches.
   LedOn(0, beat_led_countdown_ > 0);           // beat blink
-  LedBrightness(1, static_cast<uint16_t>(normal_params_.fill));
+  if (z_density) {
+    LedBrightness(1, static_cast<uint16_t>(normal_params_.fill));       // lane 1 density (Main)
+    LedBrightness(3, static_cast<uint16_t>(normal_params_.lane2_fill)); // lane 2 density (X)
+    LedBrightness(5, static_cast<uint16_t>(normal_params_.lane3_fill)); // lane 3 density (Y)
+  } else {
+    LedBrightness(1, static_cast<uint16_t>(normal_params_.fill));
+    LedBrightness(3, static_cast<uint16_t>(normal_params_.x));
+    LedOn(5, cv1_pulse_countdown_ > 0 || cv2_pulse_countdown_ > 0 || alt_layer_);
+  }
   LedOn(2, pulse_1_countdown_ > 0);            // lane 1 activity
-  LedBrightness(3, static_cast<uint16_t>(normal_params_.x));
   LedOn(4, pulse_2_countdown_ > 0);            // lane 2 activity
-  LedOn(5, cv1_pulse_countdown_ > 0 || cv2_pulse_countdown_ > 0 || alt_layer_);
 
   if (beat_led_countdown_ > 0) beat_led_countdown_--;
 }
@@ -158,39 +180,72 @@ bool GridsCard::ExternalClockActive() {
 }
 
 void GridsCard::TickUiAndSwitch() {
-  const auto sw = SwitchVal();
-  const bool down = (sw == Switch::Down);
-  last_switch_changed_ = SwitchChanged();
+  const Switch raw = SwitchVal();
+  const Switch z_before = z_filtered_;
 
-  if (last_switch_changed_) {
-    if (down) {
-      switch_down_ = true;
-      switch_down_start_ = sample_count_;
-      long_press_consumed_ = false;
-    } else {
-      if (switch_down_ && !long_press_consumed_) {
-        // Short press on release.
-        if (!ExternalClockActive()) {
-          const uint32_t now = sample_count_;
-          const uint32_t dt = now - last_tap_sample_;
-          if (last_tap_sample_ != 0 && dt > 2000 && dt < 48000 * 2) {
-            const uint32_t bpm10 = (kSampleRate * 600U) / dt;
-            if (bpm10 >= 400 && bpm10 <= 2600) {
-              critical_section_enter_blocking(&cfg_cs_);
-              cfg_.bpm10 = static_cast<uint16_t>(bpm10);
-              critical_section_exit(&cfg_cs_);
-              samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
-              MarkConfigDirty();
-            }
-          }
-          last_tap_sample_ = now;
-        }
-      }
-      switch_down_ = false;
+  if (raw != z_pending_) {
+    z_pending_ = raw;
+    z_debounce_count_ = 0;
+  } else if (z_pending_ != z_filtered_) {
+    if (++z_debounce_count_ >= kZDebounceSamples) {
+      z_filtered_ = z_pending_;
+      z_debounce_count_ = 0;
+    }
+  } else {
+    z_debounce_count_ = 0;
+  }
+
+  const bool z_stable_changed = (z_filtered_ != z_before);
+  const Switch z_was = z_before;
+
+  if (z_stable_changed && z_was != Switch::Down && z_filtered_ != Switch::Down) {
+    const bool was_up = (z_was == Switch::Up);
+    const bool now_up = (z_filtered_ == Switch::Up);
+    if (!was_up && now_up) {
+      persist_d1_ = persist_d2_ = persist_d3_ = normal_params_.fill;
+      knob_base_main_ = KnobVal(Knob::Main);
+      knob_base_x_ = KnobVal(Knob::X);
+      knob_base_y_ = KnobVal(Knob::Y);
+      knob_live_main_ = knob_live_x_ = knob_live_y_ = false;
+    } else if (was_up && !now_up) {
+      persist_map_x_ = held_map_x_;
+      persist_map_y_ = held_map_y_;
+      persist_blended_ =
+          (normal_params_.fill + normal_params_.lane2_fill + normal_params_.lane3_fill) / 3;
+      knob_base_main_ = KnobVal(Knob::Main);
+      knob_base_x_ = KnobVal(Knob::X);
+      knob_base_y_ = KnobVal(Knob::Y);
+      knob_live_main_ = knob_live_x_ = knob_live_y_ = false;
     }
   }
 
-  if (switch_down_ && !long_press_consumed_ && (sample_count_ - switch_down_start_) > kLongPressSamples) {
+  if (z_stable_changed) {
+    const bool was_down = (z_was == Switch::Down);
+    const bool now_down = (z_filtered_ == Switch::Down);
+    if (now_down && !was_down) {
+      switch_down_start_ = sample_count_;
+      long_press_consumed_ = false;
+    } else if (was_down && !now_down) {
+      if (!long_press_consumed_ && !ExternalClockActive()) {
+        const uint32_t now = sample_count_;
+        const uint32_t dt = now - last_tap_sample_;
+        if (last_tap_sample_ != 0 && dt > 2000 && dt < 48000 * 2) {
+          const uint32_t bpm10 = (kSampleRate * 600U) / dt;
+          if (bpm10 >= 400 && bpm10 <= 2600) {
+            critical_section_enter_blocking(&cfg_cs_);
+            cfg_.bpm10 = static_cast<uint16_t>(bpm10);
+            critical_section_exit(&cfg_cs_);
+            samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
+            MarkConfigDirty();
+          }
+        }
+        last_tap_sample_ = now;
+      }
+    }
+  }
+
+  const bool down = (z_filtered_ == Switch::Down);
+  if (down && !long_press_consumed_ && (sample_count_ - switch_down_start_) > kLongPressSamples) {
     alt_layer_ = !alt_layer_;
     long_press_consumed_ = true;
     main_latch_.picked_up = false;
@@ -216,47 +271,85 @@ int32_t GridsCard::ApplyPickup(Knob knob, KnobLayerState& state) {
 }
 
 void GridsCard::RefreshRuntimeParams() {
-  RuntimeParams& active = alt_layer_ ? alt_params_ : normal_params_;
-  active.fill = ApplyPickup(Knob::Main, main_latch_);
-  active.x = ApplyPickup(Knob::X, x_latch_);
-  active.y = ApplyPickup(Knob::Y, y_latch_);
+  if (z_filtered_ == Switch::Down) {
+    return;
+  }
 
-  if (!alt_layer_) {
-    int32_t x = active.x;
-    int32_t y = active.y;
-    int32_t fill = active.fill;
+  const bool z_up = (z_filtered_ == Switch::Up);
 
-    if (Connected(CV1)) {
+  auto update_knob_live = [this]() {
+    if (std::abs(KnobVal(Knob::Main) - knob_base_main_) > static_cast<int32_t>(kPickupDeadband)) {
+      if (!knob_live_main_) {
+        main_latch_.picked_up = true;
+        main_latch_.stored = KnobVal(Knob::Main);
+      }
+      knob_live_main_ = true;
+    }
+    if (std::abs(KnobVal(Knob::X) - knob_base_x_) > static_cast<int32_t>(kPickupDeadband)) {
+      if (!knob_live_x_) {
+        x_latch_.picked_up = true;
+        x_latch_.stored = KnobVal(Knob::X);
+      }
+      knob_live_x_ = true;
+    }
+    if (std::abs(KnobVal(Knob::Y) - knob_base_y_) > static_cast<int32_t>(kPickupDeadband)) {
+      if (!knob_live_y_) {
+        y_latch_.picked_up = true;
+        y_latch_.stored = KnobVal(Knob::Y);
+      }
+      knob_live_y_ = true;
+    }
+  };
+
+  if (z_up) {
+    update_knob_live();
+    // Z up: Main / X / Y = per-lane density; map = held knob position + CV1 (CV only when X/Y are live).
+    int32_t d1 = knob_live_main_ ? ApplyPickup(Knob::Main, main_latch_) : persist_d1_;
+    int32_t d2 = knob_live_x_ ? ApplyPickup(Knob::X, x_latch_) : persist_d2_;
+    int32_t d3 = knob_live_y_ ? ApplyPickup(Knob::Y, y_latch_) : persist_d3_;
+
+    int32_t mx = held_map_x_;
+    int32_t my = held_map_y_;
+    if (Connected(CV1) && (knob_live_x_ || knob_live_y_)) {
       const int32_t cv1 = (CVIn1() * cfg_.cv1_amount) / 64;
-      if (cfg_.cv1_mode == ConfigStore::CV1ToX) x += cv1;
-      if (cfg_.cv1_mode == ConfigStore::CV1ToY) y += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToX) mx += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToY) my += cv1;
       if (cfg_.cv1_mode == ConfigStore::CV1ToBlend) {
-        x += cv1 / 2;
-        y += cv1 / 2;
+        mx += cv1 / 2;
+        my += cv1 / 2;
       }
     }
-    if (Connected(CV2)) {
-      fill += (CVIn2() * cfg_.cv2_amount) / 64;
+    if (Connected(CV2) && (knob_live_main_ || knob_live_x_ || knob_live_y_)) {
+      const int32_t cv2 = (CVIn2() * cfg_.cv2_amount) / 64;
+      d1 += cv2;
+      d2 += cv2;
+      d3 += cv2;
     }
 
-    if (x < 0) x = 0;
-    if (x > 4095) x = 4095;
-    if (y < 0) y = 0;
-    if (y > 4095) y = 4095;
-    if (fill < 0) fill = 0;
-    if (fill > 4095) fill = 4095;
+    if (mx < 0) mx = 0;
+    if (mx > 4095) mx = 4095;
+    if (my < 0) my = 0;
+    if (my > 4095) my = 4095;
+    if (d1 < 0) d1 = 0;
+    if (d1 > 4095) d1 = 4095;
+    if (d2 < 0) d2 = 0;
+    if (d2 > 4095) d2 = 4095;
+    if (d3 < 0) d3 = 0;
+    if (d3 > 4095) d3 = 4095;
 
-    normal_params_.x = x;
-    normal_params_.y = y;
+    normal_params_.x = mx;
+    normal_params_.y = my;
+    normal_params_.fill = d1;
+    normal_params_.lane2_fill = d2;
+    normal_params_.lane3_fill = d3;
+    return;
+  }
 
-    // Macro fill drives 3 lanes through preconfigured scaling.
-    const int32_t laneBlend =
-        ((fill * cfg_.lane1_fill_scale) + (fill * cfg_.lane2_fill_scale) + (fill * cfg_.lane3_fill_scale)) / 300;
-    int32_t blended = laneBlend + cfg_.lane1_fill_offset + cfg_.lane2_fill_offset + cfg_.lane3_fill_offset;
-    if (blended < 0) blended = 0;
-    if (blended > 4095) blended = 4095;
-    normal_params_.fill = blended;
-  } else {
+  if (alt_layer_) {
+    RuntimeParams& active = alt_params_;
+    active.fill = ApplyPickup(Knob::Main, main_latch_);
+    active.x = ApplyPickup(Knob::X, x_latch_);
+    active.y = ApplyPickup(Knob::Y, y_latch_);
     // Alt layer edits advanced params.
     critical_section_enter_blocking(&cfg_cs_);
     cfg_.chaos = static_cast<uint8_t>(alt_params_.fill >> 5);
@@ -267,6 +360,54 @@ void GridsCard::RefreshRuntimeParams() {
     samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
     if (samples_per_tick_ == 0) samples_per_tick_ = 1;
     MarkConfigDirty();
+  } else {
+    update_knob_live();
+
+    int32_t x_knob = knob_live_x_ ? ApplyPickup(Knob::X, x_latch_) : persist_map_x_;
+    int32_t y_knob = knob_live_y_ ? ApplyPickup(Knob::Y, y_latch_) : persist_map_y_;
+    int32_t x = x_knob;
+    int32_t y = y_knob;
+
+    if (Connected(CV1) && (knob_live_x_ || knob_live_y_)) {
+      const int32_t cv1 = (CVIn1() * cfg_.cv1_amount) / 64;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToX) x += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToY) y += cv1;
+      if (cfg_.cv1_mode == ConfigStore::CV1ToBlend) {
+        x += cv1 / 2;
+        y += cv1 / 2;
+      }
+    }
+
+    if (x < 0) x = 0;
+    if (x > 4095) x = 4095;
+    if (y < 0) y = 0;
+    if (y > 4095) y = 4095;
+
+    held_map_x_ = x_knob;
+    held_map_y_ = y_knob;
+
+    int32_t blended;
+    if (!knob_live_main_) {
+      blended = persist_blended_;
+    } else {
+      int32_t fill = ApplyPickup(Knob::Main, main_latch_);
+      if (Connected(CV2)) {
+        fill += (CVIn2() * cfg_.cv2_amount) / 64;
+      }
+      if (fill < 0) fill = 0;
+      if (fill > 4095) fill = 4095;
+      const int32_t laneBlend =
+          ((fill * cfg_.lane1_fill_scale) + (fill * cfg_.lane2_fill_scale) + (fill * cfg_.lane3_fill_scale)) / 300;
+      blended = laneBlend + cfg_.lane1_fill_offset + cfg_.lane2_fill_offset + cfg_.lane3_fill_offset;
+      if (blended < 0) blended = 0;
+      if (blended > 4095) blended = 4095;
+    }
+
+    normal_params_.x = x;
+    normal_params_.y = y;
+    normal_params_.fill = blended;
+    normal_params_.lane2_fill = blended;
+    normal_params_.lane3_fill = blended;
   }
 }
 

@@ -4,8 +4,9 @@ Grids-inspired trigger sequencer firmware for the Music Thing Workshop Computer.
 
 This card adapts the Mutable Instruments Grids concept to Workshop Computer hardware constraints (fewer panel controls and I/O), with:
 
-- X/Y map control
-- Fill macro control
+- X/Y map control (switch `Z` in **middle**)
+- Fill macro control (switch `Z` in **middle**)
+- Per-lane density with **Main / X / Y** when switch `Z` is **up** (pattern map is held from the last middle position)
 - Internal clock with optional external clock on `PulseIn1`
 - Reset on `PulseIn2`
 - Alt layer on long-press (`Z`) with knob pickup/catch behavior
@@ -15,10 +16,7 @@ This card adapts the Mutable Instruments Grids concept to Workshop Computer hard
 
 1. Flash `UF2/82_Computer_Grids.uf2`.
 2. With no pulse clock patched to `PulseIn1`, internal clock runs automatically.
-3. Turn:
-   - `X` for map X position
-   - `Y` for map Y position
-   - `Main` for global fill macro
+3. With `Z` in the **middle** (normal): turn `X` / `Y` for map, `Main` for fill macro. With `Z` **up**: `Main` = lane 1 density, `X` = lane 2, `Y` = lane 3 (map stays where you left it in middle).
 4. Patch outputs:
    - `PulseOut1` and `PulseOut2` for trigger lanes 1 and 2
    - `CVOut1` for trigger lane 3 (digital pulse-style output)
@@ -26,11 +24,24 @@ This card adapts the Mutable Instruments Grids concept to Workshop Computer hard
 
 ## Controls
 
+### Switch `Z` — middle (normal)
+
 - **Knob `X`**: pattern map X position
 - **Knob `Y`**: pattern map Y position
-- **Knob `Main`**: global fill macro (all lanes)
-- **Switch `Z` short press (Down press/release)**: tap tempo (internal clock mode)
-- **Switch `Z` long press**: toggle alt layer with knob pickup/catch
+- **Knob `Main`**: global fill macro (all lanes, with per-lane scale/offset from config)
+- **Middle ↔ up**: when you flip between **middle** and **up**, the **current sound** is kept until you **move that knob** more than a small deadband (so the same physical position does not jump to a new meaning).
+
+### Switch `Z` — up (per-lane density)
+
+- **Knob `Main`**: density for trigger **lane 1** (`PulseOut1`)
+- **Knob `X`**: density for **lane 2** (`PulseOut2`)
+- **Knob `Y`**: density for **lane 3** (`CVOut1` pulse)
+- **Pattern map** (X/Y on the Grids) uses the **held** knob map from the last **middle** position (`CVIn1` applies once you have “taken over” **X** or **Y** after switching — see Inputs below)
+
+### Switch `Z` — down (momentary)
+
+- **Short press (press then release)**: tap tempo (internal clock only)
+- **Long press**: toggle alt layer (knob pickup/catch). With **middle** + alt: `Main` / `X` / `Y` adjust chaos, BPM, and swing. With **up**, knobs stay on per-lane density; randomness (chaos) is still whatever you last set in middle+alt.
 
 ### Alt Layer
 
@@ -53,8 +64,10 @@ Changes are persisted with deferred flash save.
   - Rising edge resets pattern phase.
 - **`CVIn1`**: map modulation input
   - Assignable target: X, Y, or blended XY (via config).
-- **`CVIn2`**: fill macro modulation input
-  - Amount configurable.
+  - While map knobs are **frozen** after a middle↔up change, CV1 is held off until you move **X** or **Y** past the takeover deadband (avoids double-applying the same offset).
+- **`CVIn2`**: fill modulation input
+  - **Middle**: adds to the global fill macro after **Main** has taken over following a middle↔up flip (initially on at power-up).
+  - **Up**: adds to all three lane densities after **any** of **Main** / **X** / **Y** has taken over following a flip.
 
 ### Outputs
 
@@ -66,11 +79,11 @@ Changes are persisted with deferred flash save.
 ## LED Behavior
 
 - **LED 0**: beat tick blink
-- **LED 1**: fill amount brightness
+- **LED 1**: fill macro brightness (**middle**) or lane 1 density (**up**)
 - **LED 2**: lane 1 trigger activity
-- **LED 3**: X control brightness
+- **LED 3**: map X brightness (**middle**) or lane 2 density (**up**)
 - **LED 4**: lane 2 trigger activity
-- **LED 5**: lane 3/aux activity (or alt-layer indicator)
+- **LED 5**: lane 3/aux activity or alt-layer indicator (**middle**); lane 3 density brightness (**up**)
 
 ## Build
 
