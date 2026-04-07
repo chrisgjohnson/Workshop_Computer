@@ -31,10 +31,18 @@ void ConfigStore::Save() {
   std::memcpy(wr_buf, &config_, sizeof(config_));
 
   const uint32_t ints = save_and_disable_interrupts();
-  multicore_lockout_start_blocking();
-  flash_range_erase(kOffset, FLASH_SECTOR_SIZE);
-  flash_range_program(kOffset, wr_buf, kBlockSize);
-  multicore_lockout_end_blocking();
+  // Load() may call Save() from GridsCard's constructor before core1 is launched.
+  // multicore_lockout_start_blocking() waits for core1's lockout victim — which
+  // never arrives — so a blank config sector would hang forever on first boot.
+  if (multicore_lockout_victim_is_initialized(1)) {
+    multicore_lockout_start_blocking();
+    flash_range_erase(kOffset, FLASH_SECTOR_SIZE);
+    flash_range_program(kOffset, wr_buf, kBlockSize);
+    multicore_lockout_end_blocking();
+  } else {
+    flash_range_erase(kOffset, FLASH_SECTOR_SIZE);
+    flash_range_program(kOffset, wr_buf, kBlockSize);
+  }
   restore_interrupts(ints);
 }
 

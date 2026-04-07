@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.13)
 
+# Explicit board matches other Workshop_Computer releases (55_fifths, 22_sheep, etc.).
+# Ensures UF2/link settings match what `make build` expects via PICO_BOARD_HEADER_DIRS.
+set(PICO_BOARD pico CACHE STRING "Board type")
+
 ## -----------------------------------------------------------------------------
 ## User settings (edit these, or pass -D... to CMake)
 ## -----------------------------------------------------------------------------
@@ -81,14 +85,16 @@ if (CARD_STDIO_USB)
 	message(WARNING "CARD_STDIO_USB is ignored for this MIDI-only build (no USB CDC).")
 endif()
 pico_enable_stdio_usb(${CARD_NAME} 0)
+pico_enable_stdio_uart(${CARD_NAME} 0)
 
 # Collect generated UF2 files in one place (in addition to the dev-env MAKEFILES helper).
+# Use CMAKE_CURRENT_BINARY_DIR like 55_fifths / 22_sheep (same path picotool writes for this target).
 set(COMPUTERCARD_UF2_DIR "${CMAKE_CURRENT_LIST_DIR}/UF2" CACHE PATH "Directory to copy generated .uf2 files into")
 add_custom_command(
 	TARGET ${CARD_NAME}
 	POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${COMPUTERCARD_UF2_DIR}"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"$<TARGET_FILE_DIR:${CARD_NAME}>/${CARD_NAME}.uf2"
+	COMMAND ${CMAKE_COMMAND} -E copy
+		"${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2"
 		"${COMPUTERCARD_UF2_DIR}/${CARD_NAME}.uf2"
 )
