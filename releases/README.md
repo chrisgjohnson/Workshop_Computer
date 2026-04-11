@@ -5,7 +5,7 @@
 | 03_Turing_Machine | Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs<br>[Web editor](https://www.musicthing.co.uk/web_config/turing.html) | 1.5.3<br>Working but Simple | C++ (ComputerCard) | Tom Whitwell |
 | 04_BYO_Benjolin | Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer | 1.0<br>Released | Pico SDK | Dune Desormeaux |
 | 05_chord_blimey | Generates CV/Pulse arpeggios | 0.9<br>Mostly complete (for now) | C (RPi Pico SDK) | Tom Waters |
-| 06_usb_audio | 6-Channel USB Audio & MIDI firmware with CV/Gate support | 1.0<br>Release | C++ (RPi Pico SDK) | Workshop System |
+| 06_usb_audio | 6-Channel USB Audio & MIDI firmware with CV/Gate support<br>[Web editor](https://vincentmaurer.de/usb-audio/midi_config.html) | 1.0<br>Release | C++ (RPi Pico SDK) | Vincent Maurer (vincentmaurer.de) |
 | 07_bumpers | 'Bouncing ball' style delay and trigger generators | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 08_bytebeat | Generates and mangles bytebeats | 0.1<br>Functional but WIP | C++/Arduino-Pico | Matt Kuebrich |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1<br>Functional but WIP | C (RPi Pico SDK) | Random Works |
@@ -15,7 +15,7 @@
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.4<br>Released | C (RPi Pico SDK) | Chris Johnson |
-| 21_resonator |  |  |  |  |
+| 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
 | 22_sheep | A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options. | 1.1<br>Released | Pico SDK | Dune Desormeaux |
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
@@ -27,10 +27,11 @@
 | 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo)<br>Functional, but WIP | C++/Arduino, with vscode+platformio. | Tristan Rowley |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0<br>Released | MicroPython | M. John Mills |
-| 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.1<br>Functional but WIP | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
+| 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
 | 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol<br>[Web editor](https://dessertplanet.github.io/web-druid/) | 1.1<br>Released | Pico SDK + Lua | Dune Desormeaux |
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
+| 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Release | C++ (RPi Pico SDK), C | Vincent Maurer (vincentmaurer.de) |
 | 53_glitter | Granular Looping Sampler | 0.1.0<br>Beta Test | Pico SDK 2.1.1 | Steve Jones |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
