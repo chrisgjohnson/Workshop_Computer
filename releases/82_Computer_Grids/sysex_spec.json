@@ -31,11 +31,11 @@
   },
   "data_layout": {
     "struct": "ConfigStore::Data",
+    "raw_payload_bytes": 28,
     "fields": [
       { "name": "magic", "type": "u32", "default": "0x47524453" },
-      { "name": "version", "type": "u16", "default": 1 },
       { "name": "bpm10", "type": "u16", "default": 1200, "range": [400, 2600] },
-      { "name": "swing", "type": "u8", "default": 0, "range": [0, 100] },
+      { "name": "swing", "type": "u8", "default": 50, "range": [50, 75], "description": "Sequencer-style swing %: 50 straight, 75 strong shuffle; internal clock only." },
       { "name": "chaos", "type": "u8", "default": 10, "range": [0, 127] },
       { "name": "cv1_mode", "type": "u8", "enum": ["CV1ToX", "CV1ToY", "CV1ToBlend"] },
       { "name": "cv2_mode", "type": "u8", "enum": ["CV2ToFill"] },
@@ -48,7 +48,8 @@
       { "name": "lane2_fill_offset", "type": "i8", "default": 8, "range": [-127, 127] },
       { "name": "lane3_fill_offset", "type": "i8", "default": -10, "range": [-127, 127] },
       { "name": "aux_mode", "type": "u8", "enum": ["AuxAccent", "AuxClock", "AuxLane3Mirror"] },
-      { "name": "pulse_ms", "type": "u8", "default": 10, "range": [1, 40] }
+      { "name": "pulse_ms", "type": "u8", "default": 10, "range": [1, 40] },
+      { "name": "reserved", "type": "u8[8]", "default": "all 0", "description": "Padding / future use; keeps packed size equal to sizeof(ConfigStore::Data) for MIDI apply." }
     ]
   }
 }

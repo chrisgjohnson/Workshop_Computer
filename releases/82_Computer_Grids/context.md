@@ -32,6 +32,11 @@ Dense reference for USB / Web MIDI / dual-core bring-up. User-facing docs stay i
 5. **USB on wrong core vs reverb** — Workshop shipping layout is **USB core 0**, audio core 1; `midi_device` example is the opposite.
 6. **Device-only TinyUSB** on Workshop — insufficient vs **reverb’s device+host build + runtime `tud` vs `tuh`** for correct PHY/port behavior.
 
+## Swing timing
+
+- **`cfg.swing`** is stored as **50–75** (percent, sequencer-style: 50 straight, 75 strong shuffle).
+- Applied in **`GridsCard::ProcessSample`** for the **internal** clock only: `InternalClockSpacingSamples()` uses `amount = swing − 50` (0…25) so skew runs **0 … nominal/4** on alternating steps; average spacing stays nominal. **`GridsEngine` step order is unchanged**. External `PulseIn1` ignores swing.
+
 ## Key files
 
 - `main.cpp` — boot 200 MHz, core split, USB init branch, USB loop.

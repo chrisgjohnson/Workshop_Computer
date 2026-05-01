@@ -6,7 +6,6 @@
 class ConfigStore {
  public:
   static constexpr uint32_t kMagic = 0x47524453;  // GRDS
-  static constexpr uint16_t kVersion = 1;
   static constexpr size_t kFlashSize = 2 * 1024 * 1024;
   static constexpr size_t kBlockSize = 4096;
   static constexpr size_t kOffset = kFlashSize - kBlockSize;
@@ -17,10 +16,10 @@ class ConfigStore {
 
   struct Data {
     uint32_t magic = kMagic;
-    uint16_t version = kVersion;
     uint16_t bpm10 = 1200;  // 120.0 BPM
 
-    uint8_t swing = 0;
+    /** Swing amount 50 (straight) … 75 (strong shuffle), sequencer-style %. */
+    uint8_t swing = 50;
     uint8_t chaos = 10;
     uint8_t cv1_mode = CV1ToBlend;
     uint8_t cv2_mode = CV2ToFill;
@@ -37,7 +36,8 @@ class ConfigStore {
 
     uint8_t aux_mode = AuxAccent;
     uint8_t pulse_ms = 10;
-    uint8_t reserved[6] = {};
+    /** Wire size must match `sizeof(Data)` (28); pads SysEx / flash blob without trailing compiler padding. */
+    uint8_t reserved[8] = {};
   };
 
   void Load(bool force_reset = false);

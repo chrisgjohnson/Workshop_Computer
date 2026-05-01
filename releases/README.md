@@ -33,6 +33,7 @@
 | 69_trace | Oscillograph stereo oscillator | 0.1 | C++ (ComputerCard) | Ruiyang Wang |  |  | Functional but WIP |
 | 77_Placeholder | Reserved for secret project | 0.0 | None | None |  |  | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1 | C++ (ComputerCard) | Chris Johnson |  |  | Proof of concept |
+| 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration. | 1.0.0 | C++ (ComputerCard) | Phil Miller | | Workshop Grids | Released |
 | 88_Blank | Reserved for blank 88 cards | 0 | None | Tom Whitwell |  |  | None |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1 | Lua / Blackbird | Dune Desormeaux |  |  | Released |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1 | C++ (ComputerCard) | divmod/@olt |  |  | Released |

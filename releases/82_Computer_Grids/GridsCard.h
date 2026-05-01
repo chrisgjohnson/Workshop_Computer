@@ -49,6 +49,9 @@ class GridsCard : public ComputerCard {
   static void SanitizeConfig(ConfigStore::Data& cfg);
   uint16_t CurrentPulseSamples() const;
   bool ExternalClockActive();
+  void RecomputeNominalTickSamples();
+  /** swing_pct: 50 straight … 75 max shuffle (sequencer-style %). */
+  static uint32_t InternalClockSpacingSamples(uint32_t nominal_samples, uint8_t swing_pct_50_75, uint8_t engine_step_before_tick);
 
   ConfigStore store_;
   ConfigStore::Data cfg_{};

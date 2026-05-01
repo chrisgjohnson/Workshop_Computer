@@ -9,9 +9,8 @@ const CMD_SAVE = 0x04;
 
 const DEFAULTS = {
   magic: 0x47524453,
-  version: 1,
   bpm10: 1200,
-  swing: 0,
+  swing: 50,
   chaos: 10,
   cv1_mode: 2,
   cv2_mode: 0,
@@ -142,9 +141,8 @@ function asInt(v, dflt = 0) {
 function getConfigFromForm() {
   return {
     magic: DEFAULTS.magic,
-    version: DEFAULTS.version,
     bpm10: clamp(asInt(byId("bpm10").value, DEFAULTS.bpm10), 400, 2600),
-    swing: clamp(asInt(byId("swing").value, DEFAULTS.swing), 0, 100),
+    swing: clamp(asInt(byId("swing").value, DEFAULTS.swing), 50, 75),
     chaos: clamp(asInt(byId("chaos").value, DEFAULTS.chaos), 0, 127),
     cv1_mode: clamp(asInt(byId("cv1_mode").value, DEFAULTS.cv1_mode), 0, 2),
     cv2_mode: DEFAULTS.cv2_mode,
@@ -158,7 +156,7 @@ function getConfigFromForm() {
     lane3_fill_offset: clamp(asInt(byId("lane3_fill_offset").value, DEFAULTS.lane3_fill_offset), -127, 127),
     aux_mode: clamp(asInt(byId("aux_mode").value, DEFAULTS.aux_mode), 0, 2),
     pulse_ms: clamp(asInt(byId("pulse_ms").value, DEFAULTS.pulse_ms), 1, 40),
-    reserved: [0, 0, 0, 0, 0, 0],
+    reserved: [0, 0, 0, 0, 0, 0, 0, 0],
   };
 }
 
@@ -198,7 +196,6 @@ function encodeStruct(cfg) {
   };
 
   pushU32(cfg.magic);
-  pushU16(cfg.version);
   pushU16(cfg.bpm10);
   pushU8(cfg.swing);
   pushU8(cfg.chaos);
@@ -214,7 +211,7 @@ function encodeStruct(cfg) {
   pushI8(cfg.lane3_fill_offset);
   pushU8(cfg.aux_mode);
   pushU8(cfg.pulse_ms);
-  for (const r of cfg.reserved || [0, 0, 0, 0, 0, 0]) pushU8(r);
+  for (const r of cfg.reserved || [0, 0, 0, 0, 0, 0, 0, 0]) pushU8(r);
   return bytes;
 }
 
@@ -229,7 +226,6 @@ function decodeStruct(bytes) {
   const u32 = () => u8() | (u8() << 8) | (u8() << 16) | (u8() << 24);
   const cfg = {};
   cfg.magic = u32() >>> 0;
-  cfg.version = u16();
   cfg.bpm10 = u16();
   cfg.swing = u8();
   cfg.chaos = u8();
@@ -245,7 +241,7 @@ function decodeStruct(bytes) {
   cfg.lane3_fill_offset = i8();
   cfg.aux_mode = u8();
   cfg.pulse_ms = u8();
-  cfg.reserved = [u8(), u8(), u8(), u8(), u8(), u8()];
+  cfg.reserved = [u8(), u8(), u8(), u8(), u8(), u8(), u8(), u8()];
   return cfg;
 }
 
@@ -282,7 +278,14 @@ function sendSysEx(cmd, payload = []) {
     setStatus("No MIDI output selected.");
     return;
   }
-  const msg = [SYSEX_START, MFR, DEVICE, cmd, ...payload, SYSEX_END];
+  const pl = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  const msg = new Uint8Array(4 + pl.length + 1);
+  msg[0] = SYSEX_START;
+  msg[1] = MFR;
+  msg[2] = DEVICE;
+  msg[3] = cmd;
+  msg.set(pl, 4);
+  msg[msg.length - 1] = SYSEX_END;
   state.output.send(msg);
 }
 
@@ -453,6 +456,9 @@ function importJSON(file) {
   reader.onload = () => {
     try {
       const cfg = JSON.parse(reader.result);
+      if ("swing" in cfg) {
+        cfg.swing = clamp(asInt(cfg.swing, DEFAULTS.swing), 50, 75);
+      }
       setFormFromConfig(cfg);
       setStatus("Imported config JSON.");
     } catch (e) {

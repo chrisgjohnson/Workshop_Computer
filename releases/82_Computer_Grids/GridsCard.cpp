@@ -70,21 +70,39 @@ T Clamp(T value, T lo, T hi) {
 }
 }  // namespace
 
+void GridsCard::RecomputeNominalTickSamples() {
+  samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
+  if (samples_per_tick_ == 0) samples_per_tick_ = 1;
+}
+
+uint32_t GridsCard::InternalClockSpacingSamples(uint32_t nominal_samples, uint8_t swing_pct_50_75,
+                                                uint8_t engine_step_before_tick) {
+  if (nominal_samples == 0) nominal_samples = 1;
+  // swing_pct_50_75: 50 = straight, 75 = max shuffle; amount 0–25 maps to skew 0 … nominal/4.
+  const unsigned amount = (swing_pct_50_75 > 75) ? 25 : (swing_pct_50_75 < 50) ? 0 : (swing_pct_50_75 - 50);
+  if (amount == 0) return nominal_samples;
+  const uint32_t skew = (nominal_samples * amount * 25U) / 2500U;
+  if ((engine_step_before_tick & 1U) == 0U) {
+    const uint32_t shortened = nominal_samples - skew;
+    return shortened ? shortened : 1U;
+  }
+  return nominal_samples + skew;
+}
+
 GridsCard::GridsCard() {
   store_.Load(false);
   critical_section_init(&cfg_cs_);
   cfg_ = store_.Get();
   SanitizeConfig(cfg_);
   engine_.Seed(static_cast<uint32_t>(UniqueCardID()));
-  samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
-  if (samples_per_tick_ == 0) samples_per_tick_ = 1;
+  RecomputeNominalTickSamples();
 
   normal_params_.fill = 2048;
   normal_params_.lane2_fill = 2048;
   normal_params_.lane3_fill = 2048;
   alt_params_.fill = cfg_.chaos * 32;
   alt_params_.x = cfg_.bpm10;
-  alt_params_.y = cfg_.swing * 16;
+  alt_params_.y = ((static_cast<uint32_t>(cfg_.swing) - 50U) * 4095U) / 25U;
 
   const Switch z0 = SwitchVal();
   z_filtered_ = z0;
@@ -99,8 +117,7 @@ void GridsCard::ProcessSample() {
       pending_sysex_cfg_valid_ = false;
     }
     critical_section_exit(&cfg_cs_);
-    samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
-    if (samples_per_tick_ == 0) samples_per_tick_ = 1;
+    RecomputeNominalTickSamples();
   }
 
   sample_count_++;
@@ -109,7 +126,12 @@ void GridsCard::ProcessSample() {
 
   if (PulseIn2RisingEdge()) {
     engine_.Reset();
-    next_tick_at_ = sample_count_ + samples_per_tick_;
+    RecomputeNominalTickSamples();
+    if (!ExternalClockActive()) {
+      next_tick_at_ = sample_count_ + InternalClockSpacingSamples(samples_per_tick_, cfg_.swing, 31);
+    } else {
+      next_tick_at_ = sample_count_ + samples_per_tick_;
+    }
   }
 
   const bool ext_clock = ExternalClockActive();
@@ -118,10 +140,13 @@ void GridsCard::ProcessSample() {
     fire_tick = PulseIn1RisingEdge();
   } else if (sample_count_ >= next_tick_at_) {
     fire_tick = true;
-    next_tick_at_ += samples_per_tick_;
   }
 
   if (fire_tick) {
+    uint8_t step_before_tick = 0;
+    if (!ext_clock) {
+      step_before_tick = engine_.Step();
+    }
     RefreshRuntimeParams();
     const uint16_t map_x = static_cast<uint16_t>(normal_params_.x);
     const uint16_t map_y = static_cast<uint16_t>(normal_params_.y);
@@ -135,6 +160,10 @@ void GridsCard::ProcessSample() {
     const auto outputs = engine_.Tick(map_x, map_y, f1, f2, f3, cfg_.chaos);
     TriggerOutputs(outputs);
     beat_led_countdown_ = CurrentPulseSamples();
+    if (!ext_clock) {
+      next_tick_at_ =
+          sample_count_ + InternalClockSpacingSamples(samples_per_tick_, cfg_.swing, step_before_tick);
+    }
   }
 
   const bool z_density = (z_filtered_ == Switch::Up);
@@ -235,7 +264,7 @@ void GridsCard::TickUiAndSwitch() {
             critical_section_enter_blocking(&cfg_cs_);
             cfg_.bpm10 = static_cast<uint16_t>(bpm10);
             critical_section_exit(&cfg_cs_);
-            samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
+            RecomputeNominalTickSamples();
             MarkConfigDirty();
           }
         }
@@ -355,10 +384,9 @@ void GridsCard::RefreshRuntimeParams() {
     cfg_.chaos = static_cast<uint8_t>(alt_params_.fill >> 5);
     if (cfg_.chaos > 127) cfg_.chaos = 127;
     cfg_.bpm10 = static_cast<uint16_t>(600 + (alt_params_.x * 2000) / 4095);
-    cfg_.swing = static_cast<uint8_t>((alt_params_.y * 100) / 4095);
+    cfg_.swing = static_cast<uint8_t>(50 + (alt_params_.y * 25) / 4095);
     critical_section_exit(&cfg_cs_);
-    samples_per_tick_ = (kSampleRate * 600U) / (cfg_.bpm10 * 4U);
-    if (samples_per_tick_ == 0) samples_per_tick_ = 1;
+    RecomputeNominalTickSamples();
     MarkConfigDirty();
   } else {
     update_knob_live();
@@ -442,19 +470,56 @@ void GridsCard::TickPulseTimers() {
 }
 
 void GridsCard::HandleIncomingSysEx() {
-  static uint8_t packet[256];
-  while (tud_midi_available()) {
-    const size_t len = tud_midi_stream_read(packet, sizeof(packet));
-    if (len < 5 || packet[0] != kSysExStart || packet[len - 1] != kSysExEnd) continue;
-    if (packet[1] != kManufacturer || packet[2] != kDevice) continue;
-    const uint8_t cmd = packet[3];
-    if (cmd == kCmdGetConfig) {
-      SendConfigSysEx();
-    } else if (cmd == kCmdSetConfig && len >= 6) {
-      ReceiveConfigSysEx(&packet[4], len - 5);
-    } else if (cmd == kCmdSaveConfig) {
-      MarkConfigDirty();
+  // Accumulate stream bytes until 0xF7 — a single tud_midi_stream_read() may return a
+  // fragment (USB MIDI packs 1–3 data bytes per 32-bit packet), and the old logic
+  // discarded those bytes when F7 was not yet in the buffer.
+  static uint8_t rx_buf[384];
+  static size_t rx_len = 0;
+  while (tud_midi_available() && rx_len < sizeof(rx_buf)) {
+    const uint32_t n =
+        tud_midi_stream_read(rx_buf + rx_len, static_cast<uint32_t>(sizeof(rx_buf) - rx_len));
+    if (n == 0) break;
+    rx_len += n;
+  }
+  if (rx_len >= sizeof(rx_buf)) {
+    rx_len = 0;
+    return;
+  }
+  for (;;) {
+    size_t i = 0;
+    while (i < rx_len && rx_buf[i] != kSysExStart) {
+      i++;
     }
+    if (i >= rx_len) {
+      rx_len = 0;
+      return;
+    }
+    size_t j = i + 1;
+    while (j < rx_len && rx_buf[j] != kSysExEnd) {
+      j++;
+    }
+    if (j >= rx_len) {
+      if (i > 0) {
+        memmove(rx_buf, rx_buf + i, rx_len - i);
+        rx_len -= i;
+      }
+      return;
+    }
+    uint8_t* msg = &rx_buf[i];
+    const size_t msg_len = j - i + 1;
+    if (msg_len >= 5 && msg[1] == kManufacturer && msg[2] == kDevice) {
+      const uint8_t cmd = msg[3];
+      if (cmd == kCmdGetConfig) {
+        SendConfigSysEx();
+      } else if (cmd == kCmdSetConfig && msg_len >= 6) {
+        ReceiveConfigSysEx(&msg[4], msg_len - 5);
+      } else if (cmd == kCmdSaveConfig) {
+        MarkConfigDirty();
+      }
+    }
+    const size_t after = j + 1;
+    memmove(rx_buf, rx_buf + after, rx_len - after);
+    rx_len -= after;
   }
 }
 
@@ -480,12 +545,11 @@ void GridsCard::ReceiveConfigSysEx(const uint8_t* payload, size_t len) {
   if (len == 0) return;
   uint8_t decoded[sizeof(ConfigStore::Data)] = {};
   const size_t decoded_len = Decode7Bit(payload, len, decoded, sizeof(decoded));
-  if (decoded_len != sizeof(ConfigStore::Data)) return;
+  if (decoded_len < sizeof(ConfigStore::Data)) return;
   ConfigStore::Data incoming;
   std::memcpy(&incoming, decoded, sizeof(incoming));
   if (incoming.magic != ConfigStore::kMagic) return;
   SanitizeConfig(incoming);
-  incoming.version = ConfigStore::kVersion;
   critical_section_enter_blocking(&cfg_cs_);
   pending_sysex_cfg_ = incoming;
   pending_sysex_cfg_valid_ = true;
@@ -501,9 +565,8 @@ void GridsCard::MarkConfigDirty() {
 
 void GridsCard::SanitizeConfig(ConfigStore::Data& cfg) {
   cfg.magic = ConfigStore::kMagic;
-  cfg.version = ConfigStore::kVersion;
   cfg.bpm10 = Clamp<uint16_t>(cfg.bpm10, 400, 2600);
-  cfg.swing = Clamp<uint8_t>(cfg.swing, 0, 100);
+  cfg.swing = Clamp<uint8_t>(cfg.swing, 50, 75);
   cfg.chaos = Clamp<uint8_t>(cfg.chaos, 0, 127);
   cfg.cv1_mode = (cfg.cv1_mode <= static_cast<uint8_t>(ConfigStore::CV1ToBlend))
                      ? cfg.cv1_mode

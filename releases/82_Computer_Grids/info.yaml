@@ -1,6 +1,6 @@
 Description: Grids-inspired trigger sequencer with Web MIDI SysEx configuration.
 Language: C++
-Creator: Community adaptation for Music Thing Workshop Computer
-Version: 0.0.1
-Status: Development
+Creator: Phil Miller
+Version: 0.1.0
+Status: Released
 Editor: web/index.html

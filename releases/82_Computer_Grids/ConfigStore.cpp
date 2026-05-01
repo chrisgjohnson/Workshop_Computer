@@ -15,7 +15,7 @@ static uint8_t wr_buf[ConfigStore::kBlockSize] __attribute__((aligned(4)));
 
 void ConfigStore::Load(bool force_reset) {
   std::memcpy(&config_, kFlashPtr, sizeof(Data));
-  if (force_reset || config_.magic != kMagic || config_.version != kVersion) {
+  if (force_reset || config_.magic != kMagic) {
     config_ = Data{};
     Save();
   }
@@ -54,4 +54,3 @@ void ConfigStore::SaveData(const Data& data) {
 ConfigStore::Data& ConfigStore::Get() {
   return config_;
 }
-

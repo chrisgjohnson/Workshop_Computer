@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>82_Computer_Grids Config - 🚧 WIP 🚧</title>
+  <title>82_Computer_Grids Config</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 
@@ -12,7 +12,8 @@
   <main>
     <h1>82_Computer_Grids Web Config</h1>
     <p class="hint">
-      Use a USB-C data cable, close any Serial Monitor/MIDI app using the device, and use a Chromium-based browser with Web MIDI
+      Use a USB-C data cable, close any Serial Monitor/MIDI app using the device, and use a Chromium-based browser with
+      Web MIDI
       SysEx enabled. iOS browsers are generally unsupported.
     </p>
 
@@ -56,10 +57,11 @@
             <input id="bpm10" type="number" min="400" max="2600" />
           </div>
         </label>
-        <label>Swing
+        <label>Swing % <span class="hint"></span>
           <div class="pair">
-            <input id="swing_range" type="range" min="0" max="100" />
-            <input id="swing" type="number" min="0" max="100" />
+            <input id="swing_range" type="range" min="50" max="75" step="1"
+              title="50% straight timing, 75% strong shuffle" />
+            <input id="swing" type="number" min="50" max="75" title="50% straight timing, 75% strong shuffle" />
           </div>
         </label>
         <label>Chaos
