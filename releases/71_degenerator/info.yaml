@@ -1,0 +1,8 @@
+Description: Disintegrating Looper — capture audio loops and apply irreversible degradation with saturation, filter drift, tape hiss, oxide shedding, bit crush, and bit rot
+Name: Degenerator
+Language: C++ (Pico SDK)
+Creator: Joep Vermaat
+Version: "1.0"
+Status: Released
+Editor: ""
+Repository: https://codeberg.org/johantv/Degenerator
