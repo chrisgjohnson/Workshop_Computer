@@ -2,6 +2,7 @@
 | Folder Name | Description | Version | Language | Creator |
 | ----------- | ----------- | ------- | -------- | ------- |
 | 00_Simple_MIDI | Takes USB midi, sends it to pulse and CV outputs, also sends knob positions and CV inputs back to the computer as CC values. | 0.6.6<br>Working but simple | Arduino-Pico | Tom Whitwell |
+| 02_comingsoon |  |  |  |  |
 | 03_Turing_Machine | Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs<br>[Web editor](https://www.musicthing.co.uk/web_config/turing.html) | 1.5.3<br>Working but Simple | C++ (ComputerCard) | Tom Whitwell |
 | 04_BYO_Benjolin | Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer | 1.0<br>Released | Pico SDK | Dune Desormeaux |
 | 05_chord_blimey | Generates CV/Pulse arpeggios | 0.9<br>Mostly complete (for now) | C (RPi Pico SDK) | Tom Waters |
