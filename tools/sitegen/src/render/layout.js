@@ -75,13 +75,18 @@ async function flash(url, el) {
     var parsed = uf2ToFlashBuffer(new Uint8Array(await r.arrayBuffer()));
     el.innerHTML = '⏳ Flashing…';
     await pb.flashEraseAndWrite(parsed.address, parsed.data);
+    el.innerHTML = '⏳ Verifying…';
+    var readback = await pb.flashRead(parsed.address, parsed.data.length);
+    for (var i = 0; i < parsed.data.length; i++) {
+      if (readback[i] !== parsed.data[i]) throw new Error('Verify failed at byte ' + i);
+    }
     el.innerHTML = '✅ Reset to use';
     // try { await pb.getConnection().reboot(500); } catch(_) {}
+    setTimeout(function() { delete el.dataset.busy; el.innerHTML = '⚡ Program'; }, 3000);
   } catch(e) {
     el.innerHTML = '❌ Error';
-    setTimeout(function() { el.innerHTML = '⚡ Program'; }, 3000);
-  } finally {
     delete el.dataset.busy;
+    setTimeout(function() { el.innerHTML = '⚡ Program'; }, 3000);
   }
 }
 
