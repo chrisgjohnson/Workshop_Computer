@@ -116,9 +116,13 @@ public:
 				// Accumulate raw inputs, used for CV in calibration
 				rawSum[i] += sample;
 				rawCount[i]++;
+				calMvSumAudio[i] += AudioInMillivolts(i);
+				calMvCountAudio[i]++;
 
 				rawSumCv[i] += CVIn(i);
 				rawCountCv[i]++;
+				calMvSumCv[i] += CVInMillivolts(i);
+				calMvCountCv[i]++;
 			}
 		}
 		else
@@ -192,7 +196,7 @@ public:
 		static uint32_t lastConnSend = 0;
 
 
-		// Write calibration to EEPROM if requested via SysEx
+		// Write CV out calibration to EEPROM if requested via SysEx
 		if (eepromWriteReady)
 		{
 			eepromWriteReady = false;
@@ -207,7 +211,25 @@ public:
 				bufOff += pageSize;
 				toWrite -= pageSize;
 			}
-			// Confirm to browser
+			uint8_t msg[] = { 'S', '|' };
+			SendSysEx(msg, 2);
+		}
+
+		// Write input calibration to EEPROM if requested via SysEx
+		if (inputEepromWriteReady)
+		{
+			inputEepromWriteReady = false;
+			unsigned int eeAddr = EEPROM_INPUT_ADDR;
+			int toWrite = EEPROM_INPUT_NUM_BYTES, bufOff = 0;
+			while (toWrite > 0)
+			{
+				int pageSize = 16 - (int)(eeAddr % 16);
+				if (pageSize > toWrite) pageSize = toWrite;
+				writePageToEEPROM(eeAddr, &inputEepromBuf[bufOff], pageSize);
+				eeAddr += pageSize;
+				bufOff += pageSize;
+				toWrite -= pageSize;
+			}
 			uint8_t msg[] = { 'S', '|' };
 			SendSysEx(msg, 2);
 		}
@@ -227,6 +249,7 @@ public:
 			// Calculate frequencies for audio channels and averaged raw audio and cv data,
 			// and send with 'D' message
 			float freq[2] = { 0.0f, 0.0f }, a[2], cv[2];
+			float aMv[2] = { 0.0f, 0.0f }, cvMv[2] = { 0.0f, 0.0f };
 
 			for (int i = 0; i < 2; i++)
 			{
@@ -248,18 +271,31 @@ public:
 				int32_t scv = rawSumCv[i];
 				rawSumCv[i] = 0;
 
+				int32_t nma = calMvCountAudio[i];
+				calMvCountAudio[i] = 0;
+				int32_t sma = calMvSumAudio[i];
+				calMvSumAudio[i] = 0;
+				int32_t nmc = calMvCountCv[i];
+				calMvCountCv[i] = 0;
+				int32_t smc = calMvSumCv[i];
+				calMvSumCv[i] = 0;
+
 				a[i] = (n > 0) ? ((float)s / (float)n) : 0.0f;
 				cv[i] = (ncv > 0) ? ((float)scv / (float)ncv) : 0.0f;
+				aMv[i] = (nma > 0) ? ((float)sma / (float)nma) : 0.0f;
+				cvMv[i] = (nmc > 0) ? ((float)smc / (float)nmc) : 0.0f;
 			}
 			int sig0 = rawMaxAbs[0] > 500 ? 1 : 0;
 			int sig1 = rawMaxAbs[1] > 500 ? 1 : 0;
 			rawMaxAbs[0] = 0;
 			rawMaxAbs[1] = 0;
-			int len = snprintf(buf, sizeof(buf), "D|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%d|%d",
+			int len = snprintf(buf, sizeof(buf), "D|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%d|%d|%.2f|%.2f|%.2f|%.2f",
 			                   (double)freq[0], (double)freq[1],
 			                   (double)a[0], (double)a[1],
 			                   (double)cv[0], (double)cv[1],
-			                   sig0, sig1);
+			                   sig0, sig1,
+			                   (double)aMv[0], (double)aMv[1],
+			                   (double)cvMv[0], (double)cvMv[1]);
 			SendSysEx((uint8_t *)buf, (uint32_t)len);
 
 			lastTimingSend = now;
@@ -363,18 +399,50 @@ public:
 		if (!calibrationMode) return;
 		if (size < 3) return;
 
-		// "E|<176 hex chars>|" - write calibration to EEPROM
+		auto hexVal = [](uint8_t c) -> uint8_t
+		{
+			if (c >= '0' && c <= '9') return c - '0';
+			if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+			return 0;
+		};
+
+		// "E|<176 hex chars>|" - write CV out calibration to EEPROM
 		if (data[0] == 'E' && data[1] == '|' && size >= 179)
 		{
-			auto hexVal = [](uint8_t c) -> uint8_t
-			{
-				if (c >= '0' && c <= '9') return c - '0';
-				if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-				return 0;
-			};
 			for (uint32_t i = 0; i < 88; i++)
 				eepromBuf[i] = (uint8_t)((hexVal(data[2 + i * 2]) << 4) | hexVal(data[2 + i * 2 + 1]));
 			eepromWriteReady = true;
+			return;
+		}
+
+		// "M|<mv>|" - set CVOut1 to calibrated millivolt value (used during input calibration sweep)
+		if (data[0] == 'M' && data[1] == '|')
+		{
+			char buf[24];
+			uint32_t len = size - 2 < sizeof(buf) - 1 ? size - 2 : sizeof(buf) - 1;
+			memcpy(buf, data + 2, len);
+			buf[len] = '\0';
+			CVOut1Millivolts(atoi(buf));
+			return;
+		}
+
+		// "M2|<mv>|" - set CVOut2 to calibrated millivolt value
+		if (size >= 5 && data[0] == 'M' && data[1] == '2' && data[2] == '|')
+		{
+			char buf[24];
+			uint32_t len = size - 3 < sizeof(buf) - 1 ? size - 3 : sizeof(buf) - 1;
+			memcpy(buf, data + 3, len);
+			buf[len] = '\0';
+			CVOut2Millivolts(atoi(buf));
+			return;
+		}
+
+		// "I|<76 hex chars>|" - write input calibration to EEPROM (at offset 88)
+		if (data[0] == 'I' && data[1] == '|' && size >= 79)
+		{
+			for (uint32_t i = 0; i < 38; i++)
+				inputEepromBuf[i] = (uint8_t)((hexVal(data[2 + i * 2]) << 4) | hexVal(data[2 + i * 2 + 1]));
+			inputEepromWriteReady = true;
 			return;
 		}
 
@@ -403,12 +471,17 @@ public:
 
 	volatile int32_t durationSum[2], durationCount[2];
 	volatile int32_t rawSum[2], rawCount[2], rawSumCv[2], rawCountCv[2];
+	volatile int32_t calMvSumAudio[2], calMvCountAudio[2];
+	volatile int32_t calMvSumCv[2], calMvCountCv[2];
 	volatile int32_t rawMaxAbs[2] = { 0, 0 }; // peak |sample| in current D-message window
 
 	RisingEdgeCounter rec[2];
 
 	bool eepromWriteReady = false;
 	uint8_t eepromBuf[88] = {};
+
+	bool inputEepromWriteReady = false;
+	uint8_t inputEepromBuf[38] = {};
 };
 
 

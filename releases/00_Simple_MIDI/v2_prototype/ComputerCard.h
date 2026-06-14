@@ -1,7 +1,7 @@
 /*
 ComputerCard  - by Chris Johnson
 
-version 0.3.0 prototype   -  14 Feb 2026
+version 0.3.1 prototype   -  14 June 2026
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -373,6 +373,39 @@ protected:
 		return cvOutsCalibrated;
 	}
 
+	/// Return true iff input calibration has been loaded from EEPROM.
+	bool InputsCalibrated() const { return inputsCalibrated; }
+
+	/// Return calibrated Audio In 1 in millivolts.
+	int32_t __not_in_flash_func(AudioIn1Millivolts)()
+	{
+		return ((int32_t)adcInL - inputCalCoeffs[0].adcOffset) * inputCalCoeffs[0].mvPerAdcQ16 >> 16;
+	}
+
+	/// Return calibrated Audio In 2 in millivolts.
+	int32_t __not_in_flash_func(AudioIn2Millivolts)()
+	{
+		return ((int32_t)adcInR - inputCalCoeffs[1].adcOffset) * inputCalCoeffs[1].mvPerAdcQ16 >> 16;
+	}
+
+	/// Return calibrated Audio In in millivolts (i=0 or 1).
+	int32_t __not_in_flash_func(AudioInMillivolts)(int i)
+	{
+		return ((int32_t)(i ? adcInR : adcInL) - inputCalCoeffs[i].adcOffset) * inputCalCoeffs[i].mvPerAdcQ16 >> 16;
+	}
+
+	/// Return calibrated CV In 1 in millivolts.
+	int32_t __not_in_flash_func(CVIn1Millivolts)() { return CVInMillivolts(0); }
+
+	/// Return calibrated CV In 2 in millivolts.
+	int32_t __not_in_flash_func(CVIn2Millivolts)() { return CVInMillivolts(1); }
+
+	/// Return calibrated CV In in millivolts (i=0 or 1).
+	int32_t __not_in_flash_func(CVInMillivolts)(int i)
+	{
+		return ((int32_t)cv[i] - inputCalCoeffs[2 + i].adcOffset) * inputCalCoeffs[2 + i].mvPerAdcQ16 >> 16;
+	}
+
 
 	void Abort();
 
@@ -406,6 +439,7 @@ private:
 	int ReadIntFromEEPROM(unsigned int eeAddress, bool &failed);
 	void CalcCalCoeffs(int channel);
 	int ReadEEPROM();
+	int ReadInputEEPROM();
 	uint32_t MIDIToDAC(int midiNote, int channel);
 	uint32_t MillivoltsToDAC(int millivolts, int channel, bool &limited);
 
@@ -431,6 +465,14 @@ private:
 	volatile uint8_t runADCMode;
 
 	bool cvOutsCalibrated;
+
+	struct InputCalCoeffs
+	{
+		int32_t adcOffset;    // ADC count at 0V input
+		int32_t mvPerAdcQ16;  // mV per ADC count, Q16 fixed-point
+	};
+	InputCalCoeffs inputCalCoeffs[4]; // [0]=AudioIn1, [1]=AudioIn2, [2]=CVIn1, [3]=CVIn2
+	bool inputsCalibrated;
 
 	// Buffers that DMA reads into / out of
 	uint16_t ADC_Buffer[2][8];
@@ -541,6 +583,10 @@ private:
 #define EEPROM_ADDR_CRC_H 86
 #define EEPROM_VAL_ID 2001
 #define EEPROM_NUM_BYTES 88
+
+#define EEPROM_INPUT_ADDR      88
+#define EEPROM_INPUT_VAL_ID    2002
+#define EEPROM_INPUT_NUM_BYTES 38
 
 #define EEPROM_PAGE_ADDRESS 0x50
 
@@ -1009,6 +1055,7 @@ ComputerCard::ComputerCard()
 
 	// Read EEPROM calibration values
 	cvOutsCalibrated = (ReadEEPROM() == 0);
+	inputsCalibrated = (ReadInputEEPROM() == 0);
 
 	// Read unique card ID
 	flash_get_unique_id((uint8_t *)&uniqueID);
@@ -1141,6 +1188,46 @@ int ComputerCard::ReadEEPROM()
 		// Now calculate the calibration coeffs that are actually used
 		// by the calibrated CVOut functions
 		CalcCalCoeffs(channel);
+	}
+
+	return 0;
+}
+
+int ComputerCard::ReadInputEEPROM()
+{
+	// Set up default values (approximate, uncalibrated)
+	for (int i = 0; i < 4; i++)
+	{
+		inputCalCoeffs[i].adcOffset   = 0;
+		inputCalCoeffs[i].mvPerAdcQ16 = 139000; // ≈ 2.12 mV/ADC count
+	}
+
+	bool failed = false;
+	int magic = ReadIntFromEEPROM(EEPROM_INPUT_ADDR, failed);
+	if (failed || magic != EEPROM_INPUT_VAL_ID)
+		return 1;
+
+	uint8_t buf[EEPROM_INPUT_NUM_BYTES];
+	for (int i = 0; i < EEPROM_INPUT_NUM_BYTES; i++)
+		buf[i] = ReadByteFromEEPROM(EEPROM_INPUT_ADDR + i, failed);
+
+	if (failed)
+		return 1;
+
+	uint16_t calculatedCRC = CRCencode(buf, 36);
+	uint16_t foundCRC = ((uint16_t)buf[36] << 8) | buf[37];
+	if (calculatedCRC != foundCRC)
+		return 1;
+
+	for (int ch = 0; ch < 4; ch++)
+	{
+		int off = 4 + ch * 8;
+		uint32_t raw0 = ((uint32_t)buf[off]   << 24) | ((uint32_t)buf[off+1] << 16)
+		              | ((uint32_t)buf[off+2]  <<  8) |  (uint32_t)buf[off+3];
+		uint32_t raw1 = ((uint32_t)buf[off+4] << 24) | ((uint32_t)buf[off+5] << 16)
+		              | ((uint32_t)buf[off+6]  <<  8) |  (uint32_t)buf[off+7];
+		inputCalCoeffs[ch].adcOffset   = (int32_t)raw0;
+		inputCalCoeffs[ch].mvPerAdcQ16 = (int32_t)raw1;
 	}
 
 	return 0;

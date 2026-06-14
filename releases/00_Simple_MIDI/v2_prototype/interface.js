@@ -108,6 +108,111 @@ window.onload = function()
 	MIDISetup("MTMComputer", ConnectToComputer, DisconnectFromComputer);
 }
 
+let standaloneMode = false;
+
+function showMenu()
+{
+	standaloneMode = false;
+	stopWobble();
+	sendCV(0, 0);
+	sendCV(1, 0);
+	sendInputMV(0);
+
+	// Reset all calibration state
+	calMode           = null;
+	calState          = CAL.IDLE;
+	calChannel        = 0;
+	combinedPhase     = 0;
+	calData           = [[], []];
+	freqBuf           = [[], []];
+	baseHz            = [0, 0];
+	cvTestPhase       = 0;
+	cvTestWarning     = '';
+	freqStableSince   = null;
+	calInputIndex     = 0;
+	inputCalData      = [[], [], [], []];
+	inputSweepCVVals  = [];
+	inputSweepStepIdx = 0;
+	inputSweepSettle  = 0;
+	inputSweepBuf     = [];
+	inputLastGoodRaw  = null;
+	detectPhase       = 0;
+	detectSettle      = 0;
+	detectBuf         = [];
+	detectLowADC      = null;
+	liveTrackStep     = 0;
+	liveTrackCount    = 0;
+	liveTrackBuf      = [];
+	liveTrackMeas     = [];
+	liveTrackCVOrder  = [];
+	liveTrackLastMeas = [];
+	liveAlpha2        = null;
+	calStepIndex      = 0;
+	calCVValues       = [];
+	calStepCount      = 0;
+	calStepBuffer     = [];
+
+	// Reset per-mode UI panels to initial state
+	for (const m of Object.keys(CAL_STEP_INFO))
+	{
+		const stepsEl  = document.getElementById(`calSteps-${m}`);
+		const progEl   = document.getElementById(`calProgress-${m}`);
+		const graphEl  = document.getElementById(`graphAtRes-${m}`);
+		const eepromEl = document.getElementById(`eepromPanel-${m}`);
+		const nextEl   = document.getElementById(`calNextPanel-${m}`);
+		const stEl     = document.getElementById(`standalonePanel-${m}`);
+		const contEl   = document.getElementById(`continuePanel-${m}`);
+		if (stepsEl)  stepsEl.innerHTML      = '';
+		if (progEl)   progEl.textContent     = '';
+		if (graphEl)  graphEl.style.display  = 'none';
+		if (eepromEl) eepromEl.style.display = 'none';
+		if (nextEl)   nextEl.style.display   = 'none';
+		if (stEl)     stEl.style.display     = 'none';
+		if (contEl)   contEl.style.display   = 'none';
+	}
+
+	// Reset inputs back button label
+	const backBtnInputs = document.getElementById('backBtn-inputs');
+	if (backBtnInputs) backBtnInputs.textContent = '← Cancel';
+
+	// Restore start buttons (hidden when their calibration mode is started)
+	for (const id of ['startBtn-combined', 'startBtn-inputs'])
+	{
+		const btn = document.getElementById(id);
+		if (btn) btn.style.display = '';
+	}
+
+	document.getElementById('menu').style.display = '';
+	document.getElementById('calSection-combined').style.display = 'none';
+	document.getElementById('calSection-inputs').style.display = 'none';
+
+	updateInitialInstruction();
+	updateStartButtons();
+}
+
+function showSection(mode)
+{
+	document.getElementById('menu').style.display = 'none';
+	document.getElementById('calSection-combined').style.display = 'none';
+	document.getElementById('calSection-inputs').style.display = 'none';
+	document.getElementById(`calSection-${mode}`).style.display = 'flex';
+	updateInitialInstruction();
+}
+
+function startStandalone()
+{
+	standaloneMode = true;
+	showSection('combined');
+}
+
+function continueStandaloneToInputs()
+{
+	saveCalToEEPROM();
+	showMenu();                                              // reset all state and panels
+	document.getElementById('menu').style.display = 'none'; // don't show the menu
+	showSection('inputs');
+}
+
 function ConnectToComputer()
 {
 	updateConnectionStatus();
@@ -141,7 +246,7 @@ function updateConnectionStatus()
 	if (firmwareConnected)
 		el.innerHTML = '<span style="color:green">Connected</span>';
 	else if (midiActive)
-		el.innerHTML = '<span style="color:#aaa">Wrong card</span>';
+		el.innerHTML = '<span style="color:#aaa">Wrong card, or not<br>in calibration mode</span>';
 	else
 		el.innerHTML = '<span style="color:red">Disconnected</span>';
 	updateStartButtons();
@@ -151,14 +256,18 @@ function updateConnectionStatus()
 function updateInitialInstruction()
 {
 	if (calMode !== null) return;  // updateCalUI() owns the text once started
-	const instrEl = document.getElementById('calInstruction-combined');
-	if (!instrEl) return;
+	let text;
 	if (firmwareConnected)
-		instrEl.innerHTML = "Remove all patch cables from the Computer, then press <b>Start Calibration</b> to begin.";
+		text = "Remove all patch cables from the Computer, then press <b>Start Calibration</b> to begin.";
 	else if (midiActive)
-		instrEl.innerHTML = 'Wrong card connected &mdash; connect the Workshop System Computer.';
+		text = 'Wrong card connected &mdash; connect the Workshop System Computer.';
 	else
-		instrEl.innerHTML = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the Z switch down.';
+		text = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the Z switch down.';
+	for (const id of ['calInstruction-combined', 'calInstruction-inputs'])
+	{
+		const el = document.getElementById(id);
+		if (el) el.innerHTML = text;
+	}
 }
 
 function updateStartButtons()
@@ -289,7 +398,7 @@ const CAL_STEP_INFO = {
 		{ label: '4',
 		  match: () => (calState === CAL.WAIT_INPUT || calState === CAL.SWEEP_INPUT) && calInputIndex === 3,
 		  text: () => inputStepText(3) },
-		{ label: '\u2713', text: 'Calibration complete. Review residuals below.',
+		{ label: '\u2713', text: 'Calibration complete.',
 		  match: () => calState === CAL.DONE },
 	],
 	osctracking: [
@@ -329,7 +438,9 @@ const CAL_STEP_INFO = {
 		  match: () => calState === CAL.WAIT_RECABLE },
 		{ label: '9', text: 'Calibrating &mdash; do not adjust anything.',
 		  match: () => calState === CAL.TUNING && combinedPhase === 1 },
-		{ label: '\u2713', text: 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer.',
+		{ label: '\u2713', text: () => standaloneMode
+			? 'Calibration complete.<br><br>Remove all patch cables from the Computer, then click the button to continue to input calibration.'
+			: 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer.',
 		  match: () => calState === CAL.DONE && combinedPhase === 1 },
 	],
 };
@@ -562,24 +673,33 @@ const FREQ_RANGE        = [196, 392];
 const FREQ_STABLE_CENTS = 5;
 
 // Input calibration sweep parameters
-// Firmware must send I|audio1|audio2|cv1|cv2| messages continuously.
-// Each step: discard IN_SETTLE readings for settling, then average IN_COLLECT readings.
-// Total firmware messages per input ≈ IN_STEPS × (IN_SETTLE + IN_COLLECT).
-const CAL_IN_STEPS   = 200;   // CV out steps across the full range
-const CAL_IN_SETTLE  = 3;     // readings to discard after each CV change
-const CAL_IN_COLLECT = 5;     // readings to average per recorded point
-const CAL_IN_MIN_CV  = -140000;
-const CAL_IN_MAX_CV  =  240000;
+// CV Out 1 is swept in calibrated millivolts so the regression is directly in ADC/mV,
+// removing any dependence on the CV_TEST_HIGH approximation.
+const CAL_IN_STEPS   = 100;   // steps across the sweep range
+const CAL_IN_SETTLE  = 8;     // readings to discard after each CV change
+const CAL_IN_COLLECT = 7;     // readings to average per recorded point
+const CAL_IN_MIN_MV  = -5000; // sweep start (mV)
+const CAL_IN_MAX_MV  =  5000; // sweep end   (mV)
+
+// Input connection detection: drive CV Out 1 to two known voltages and check
+// that the target input's ADC reading changes by the expected amount.
+// A cable plugged in at only one end shows no correlated change.
+const DETECT_LOW_MV    = -1000; // mV for low test point
+const DETECT_HIGH_MV   =  1000; // mV for high test point
+const DETECT_SETTLE    = 5;     // D| messages to discard after each CV change (~100 ms)
+const DETECT_COLLECT   = 3;     // D| messages to average per point (~60 ms)
+const DETECT_THRESHOLD = 300;   // ADC counts; ~2V swing expected to give ~800+ counts
 
 // Input channel metadata
-const IN_COLOR = ['#4b0082', '#c04000', '#007030', '#005090'];
-const IN_NAMES = ['Audio In 1', 'Audio In 2', 'CV In 1', 'CV In 2'];
+const IN_COLOR  = ['#4b0082', '#c04000', '#007030', '#005090'];
+const IN_NAMES  = ['Audio In 1', 'Audio In 2', 'CV In 1', 'CV In 2'];
+const IN_IMAGES = ['input_a1.png', 'input_a2.png', 'input_c1.png', 'input_c2.png'];
 
 function inputStepText(i)
 {
 	if (calState === CAL.SWEEP_INPUT && calInputIndex === i)
 		return `Measuring <b>${IN_NAMES[i]}</b> &mdash; do not adjust anything.`;
-	return `Connect <b>CV Out 1</b> to <b>${IN_NAMES[i]}</b>, then press <b>Start Measurement</b>.`;
+	return `Connect <b>CV Out 1</b> to <b>${IN_NAMES[i]}</b>.<img class="instrimg" src="images/${IN_IMAGES[i]}">`;
 }
 
 ////////////////////////////////////////////////////////////
@@ -629,12 +749,24 @@ let inputSweepSettle  = 0;          // readings discarded since last CV change
 let inputSweepBuf     = [];         // readings accumulated towards next average
 let inputLastGoodRaw  = null;       // last accepted raw reading within current step (null = any value ok)
 
+// Input connection detection sub-state (active during WAIT_INPUT)
+let detectPhase  = 0;     // 0=start, 1=settling low, 2=collecting low, 3=settling high, 4=collecting high
+let detectSettle = 0;
+let detectBuf    = [];
+let detectLowADC = null;
+
 ////////////////////////////////////////////////////////////
 // CV output
 
 function sendCV(channel, val)
 {
 	const str = channel === 0 ? `C|${val}|` : `C2|${val}|`;
+	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
+}
+
+function sendInputMV(mv)
+{
+	const str = `M|${mv}|`;
 	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
 }
 
@@ -709,6 +841,9 @@ function startCalibration(mode)
 		inputLastGoodRaw = null;
 		inputSweepCVVals = [];
 		calState         = CAL.WAIT_INPUT;
+		detectPhase      = 0;
+		const btn = document.getElementById('startBtn-inputs');
+		if (btn) btn.style.display = 'none';
 	}
 	else
 	{
@@ -722,7 +857,7 @@ function startCalibration(mode)
 }
 
 ////////////////////////////////////////////////////////////
-// Connection detection (jack normalisation probe) - pitch modes only
+// Connection detection (jack normalisation probe)
 
 function handleConnection(a1, a2, cv1, cv2)
 {
@@ -1035,7 +1170,7 @@ function calSweepTick(hz)
 	if (Math.log2(hi / lo) * 1200 > CAL_STABLE_CENTS) return;
 
 	calData[calChannel].push({ cv: calCVValues[calStepIndex], hz: avg(calStepBuffer) });
-	drawCalGraphs();
+	// drawCalGraphs();  // skip realtime redraw; graph shown on completion
 	advanceSweepStep();
 }
 
@@ -1072,6 +1207,7 @@ function advanceSweepStep()
 			calState = CAL.DONE;
 		}
 		updateCalUI();
+		drawCalGraphs();
 		return;
 	}
 
@@ -1085,7 +1221,6 @@ function advanceSweepStep()
 ////////////////////////////////////////////////////////////
 // Input calibration sweep
 
-// Called by the "Start Measurement" button when calState === WAIT_INPUT
 function startInputMeasurement()
 {
 	if (calMode !== 'inputs' || calState !== CAL.WAIT_INPUT) return;
@@ -1093,23 +1228,65 @@ function startInputMeasurement()
 	startInputSweep();
 }
 
+// Active during WAIT_INPUT: drives CV Out 1 to two known voltages and checks
+// whether the target input's ADC reading changes by the expected amount.
+// Retries automatically until a correlated response is seen.
+function inputDetectTick(adc)
+{
+	if (detectPhase === 0)
+	{
+		sendInputMV(DETECT_LOW_MV);
+		detectSettle = 0;
+		detectBuf    = [];
+		detectPhase  = 1;
+		return;
+	}
+	if (detectPhase === 1)  // settling at low voltage
+	{
+		if (++detectSettle < DETECT_SETTLE) return;
+		detectBuf.push(adc);
+		if (detectBuf.length < DETECT_COLLECT) return;
+		detectLowADC = avg(detectBuf);
+		sendInputMV(DETECT_HIGH_MV);
+		detectSettle = 0;
+		detectBuf    = [];
+		detectPhase  = 2;
+		return;
+	}
+	if (detectPhase === 2)  // settling at high voltage
+	{
+		if (++detectSettle < DETECT_SETTLE) return;
+		detectBuf.push(adc);
+		if (detectBuf.length < DETECT_COLLECT) return;
+		const highADC = avg(detectBuf);
+		if (Math.abs(highADC - detectLowADC) >= DETECT_THRESHOLD)
+			startInputMeasurement();  // confirmed: CV Out 1 is reaching this input
+		else
+			detectPhase = 0;  // no response - keep retrying
+	}
+}
+
 function startInputSweep()
 {
 	inputSweepCVVals = [];
 	for (let i = 0; i < CAL_IN_STEPS; i++)
-		inputSweepCVVals.push(Math.round(CAL_IN_MIN_CV + i * (CAL_IN_MAX_CV - CAL_IN_MIN_CV) / (CAL_IN_STEPS - 1)));
+		inputSweepCVVals.push(Math.round(CAL_IN_MAX_MV - i * (CAL_IN_MAX_MV - CAL_IN_MIN_MV) / (CAL_IN_STEPS - 1)));
 	inputSweepStepIdx = 0;
 	inputSweepSettle  = 0;
 	inputSweepBuf     = [];
 	inputLastGoodRaw  = null;
-	sendCV(0, inputSweepCVVals[0]);
+	sendInputMV(inputSweepCVVals[0]);
 	updateCalUI();
 }
 
-// Called on each incoming I| message (all four raw ADC readings).
-// Only active when calState === SWEEP_INPUT.
+// Called on each D| message with all four raw ADC readings.
 function inputSweepTick(readings)
 {
+	if (calState === CAL.WAIT_INPUT)
+	{
+		inputDetectTick(readings[calInputIndex]);
+		return;
+	}
 	if (calState !== CAL.SWEEP_INPUT) return;
 
 	inputSweepSettle++;
@@ -1125,8 +1302,8 @@ function inputSweepTick(readings)
 
 	if (inputSweepBuf.length >= CAL_IN_COLLECT)
 	{
-		inputCalData[calInputIndex].push({ cv: inputSweepCVVals[inputSweepStepIdx], adc: avg(inputSweepBuf) });
-		drawInputResiduals();
+		inputCalData[calInputIndex].push({ mv: inputSweepCVVals[inputSweepStepIdx], adc: avg(inputSweepBuf) });
+		// drawInputResiduals();  // skip realtime redraw; graph shown on completion
 		advanceInputSweep();
 	}
 }
@@ -1137,21 +1314,25 @@ function advanceInputSweep()
 	if (inputSweepStepIdx >= inputSweepCVVals.length)
 	{
 		// This input is done
-		sendCV(0, 0);
+		sendInputMV(0);
 		if (calInputIndex < IN_NAMES.length - 1)
 		{
 			calInputIndex++;
-			calState = CAL.WAIT_INPUT;
+			calState    = CAL.WAIT_INPUT;
+			detectPhase = 0;
 		}
 		else
 		{
 			calState = CAL.DONE;
+			updateCalUI();
+			saveInputCalToEEPROM();
+			return;
 		}
 		updateCalUI();
 		return;
 	}
 
-	sendCV(0, inputSweepCVVals[inputSweepStepIdx]);
+	sendInputMV(inputSweepCVVals[inputSweepStepIdx]);
 	inputSweepSettle = 0;
 	inputSweepBuf    = [];
 	inputLastGoodRaw = null;
@@ -1342,7 +1523,22 @@ function updateCalUI()
 	// Show/hide elements specific to each mode
 	const eepromPanel = document.getElementById(`eepromPanel${pfx}`);
 	if (eepromPanel)
-		eepromPanel.style.display = (calMode !== 'inputs' && calMode !== 'osctracking' && calState === CAL.DONE) ? 'flex' : 'none';
+	{
+		const showEeprom = calState === CAL.DONE &&
+			calMode !== 'osctracking' &&
+			calMode !== 'inputs' &&
+			!(calMode === 'combined' && combinedPhase === 0) &&
+			!(standaloneMode && calMode === 'combined');
+		eepromPanel.style.display = showEeprom ? 'flex' : 'none';
+	}
+
+	const backBtn = document.getElementById('backBtn-inputs');
+	if (backBtn && calMode === 'inputs')
+		backBtn.textContent = calState === CAL.DONE ? '← Back' : '← Cancel';
+
+	const standalonePanel = document.getElementById(`standalonePanel${pfx}`);
+	if (standalonePanel)
+		standalonePanel.style.display = (standaloneMode && calState === CAL.DONE && calMode === 'combined' && combinedPhase === 1) ? 'flex' : 'none';
 
 	const remeasurePanel = document.getElementById(`remeasurePanel${pfx}`);
 	if (remeasurePanel)
@@ -1351,15 +1547,11 @@ function updateCalUI()
 			&& (calState === CAL.DONE || calState === CAL.LIVE_TRACK)
 		) ? 'flex' : 'none';
 
-	const nextPanel = document.getElementById(`calNextPanel${pfx}`);
-	if (nextPanel)
-		nextPanel.style.display = (calMode === 'inputs' && calState === CAL.WAIT_INPUT) ? 'flex' : 'none';
-
-	const graphCanvas = document.getElementById(`graphAtRes${pfx}`);
+const graphCanvas = document.getElementById(`graphAtRes${pfx}`);
 	if (graphCanvas)
 	{
 		const showGraph = calMode === 'inputs'
-			? (calState === CAL.SWEEP_INPUT || calState === CAL.DONE || inputCalData.some(d => d.length > 0))
+			? false
 			: calMode === 'combined'
 				? (calState === CAL.DONE && combinedPhase === 1)
 				: (calState === CAL.TUNING || calState === CAL.DONE || calState === CAL.LIVE_TRACK);
@@ -1587,7 +1779,7 @@ function drawInputResiduals()
 	let allRes = [];
 	const chRes = inputCalData.map(data => {
 		if (data.length < 2) return [];
-		const xs = data.map(d => d.cv);
+		const xs = data.map(d => d.mv);
 		const ys = data.map(d => d.adc);
 		const { slope, intercept } = linReg(xs, ys);
 		const res = ys.map((y, i) => y - (slope * xs[i] + intercept));
@@ -1597,11 +1789,9 @@ function drawInputResiduals()
 
 	if (allRes.length === 0) return;
 
-	// X axis: CV out DAC value converted to approximate voltage
-	// (CV_TEST_HIGH ≈ 43691 DAC units ≈ 1V from the pitch calibration reference)
-	const DAC_PER_VOLT = CV_TEST_HIGH;
-	const xLo = CAL_IN_MIN_CV / DAC_PER_VOLT;
-	const xHi = CAL_IN_MAX_CV / DAC_PER_VOLT;
+	// X axis: millivolts converted to volts
+	const xLo = CAL_IN_MIN_MV / 1000;
+	const xHi = CAL_IN_MAX_MV / 1000;
 
 	// Y axis: auto-scale to data, minimum span of ±2 ADC counts
 	let rLo = Math.min(...allRes), rHi = Math.max(...allRes);
@@ -1649,7 +1839,7 @@ function drawInputResiduals()
 		ctx.strokeStyle = IN_COLOR[ch]; ctx.lineWidth = 1.5;
 		ctx.beginPath();
 		data.forEach((d, i) => {
-			const x = toX(d.cv / DAC_PER_VOLT), y = toY(res[i]);
+			const x = toX(d.mv / 1000), y = toY(res[i]);
 			if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
 		});
 		ctx.stroke();
@@ -1672,7 +1862,63 @@ function drawInputResiduals()
 }
 
 ////////////////////////////////////////////////////////////
-// EEPROM calibration save (pitch modes only - input mode TBD)
+// Input calibration EEPROM save
+
+function saveInputCalToEEPROM()
+{
+	const statusEl = document.getElementById('eepromStatus-inputs');
+
+	for (let ch = 0; ch < 4; ch++)
+	{
+		if (inputCalData[ch].length < 2)
+		{
+			if (statusEl) statusEl.textContent = `Need calibration data for ${IN_NAMES[ch]}.`;
+			return;
+		}
+	}
+
+	// 38-byte buffer: 2-byte magic, 1-byte version, 1-byte padding,
+	// 4 channels × 8 bytes (adcOffset int32 BE + mvPerAdcQ16 int32 BE), 2-byte CRC
+	const buf = new Uint8Array(38);
+	buf[0] = (2002 >> 8) & 0xFF;
+	buf[1] =  2002       & 0xFF;
+	buf[2] = 0;  // version
+	buf[3] = 0;  // padding
+
+	for (let ch = 0; ch < 4; ch++)
+	{
+		const data = inputCalData[ch];
+		const xs = data.map(d => d.mv);   // millivolts (calibrated)
+		const ys = data.map(d => d.adc);
+		const { slope, intercept } = linReg(xs, ys);
+		// slope is ADC counts per mV; 1/slope is mV per ADC count
+		const adcOffset   = Math.round(intercept);
+		const mvPerAdcQ16 = Math.round(65536 / slope);
+
+		const off = 4 + ch * 8;
+		buf[off]   = (adcOffset   >>> 24) & 0xFF;
+		buf[off+1] = (adcOffset   >>> 16) & 0xFF;
+		buf[off+2] = (adcOffset   >>>  8) & 0xFF;
+		buf[off+3] = (adcOffset   >>>  0) & 0xFF;
+		buf[off+4] = (mvPerAdcQ16 >>> 24) & 0xFF;
+		buf[off+5] = (mvPerAdcQ16 >>> 16) & 0xFF;
+		buf[off+6] = (mvPerAdcQ16 >>>  8) & 0xFF;
+		buf[off+7] = (mvPerAdcQ16 >>>  0) & 0xFF;
+	}
+
+	const crc = crcCCITT(buf.subarray(0, 36));
+	buf[36] = (crc >> 8) & 0xFF;
+	buf[37] =  crc       & 0xFF;
+
+	const hex     = Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+	const payload = 'I|' + hex + '|';
+	SendSysEx(payload.split('').map(c => c.charCodeAt(0)));
+
+	if (statusEl) statusEl.textContent = 'Saving…';
+}
+
+////////////////////////////////////////////////////////////
+// EEPROM calibration save (pitch modes only)
 
 // CRC-CCITT (poly 0x1021, init 0xFFFF) - matches firmware CRCencode()
 function crcCCITT(buf)
