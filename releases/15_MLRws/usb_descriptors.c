@@ -28,7 +28,7 @@ tusb_desc_device_t const desc_device = {
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor           = USB_VID,
     .idProduct          = USB_PID,
-    .bcdDevice          = 0x0100,
+    .bcdDevice          = 0x0101,  /* bumped so host re-enumerates after WebUSB BOS added */
     .iManufacturer      = 0x01,
     .iProduct           = 0x02,
     .iSerialNumber      = 0x03,
@@ -38,6 +38,28 @@ tusb_desc_device_t const desc_device = {
 uint8_t const *tud_descriptor_device_cb(void)
 {
     return (uint8_t const *)&desc_device;
+}
+
+/* ---- BOS Descriptor (WebUSB Platform Capability) ---- */
+/*
+ * The WebUSB Platform Capability Descriptor in the BOS tells Chrome that
+ * this device supports WebUSB, which lifts the SecurityError that otherwise
+ * blocks navigator.usb.open() on CDC-class devices.
+ *
+ * iLandingPage = 0: no URL descriptor, so no vendor GET_URL request is sent.
+ * bVendorCode = 1: required by the descriptor format but unused when iLandingPage = 0.
+ */
+#define WEBUSB_VENDOR_CODE  1
+#define BOS_TOTAL_LEN       (TUD_BOS_DESC_LEN + TUD_BOS_WEBUSB_DESC_LEN)
+
+static uint8_t const desc_bos[] = {
+    TUD_BOS_DESCRIPTOR(BOS_TOTAL_LEN, 1),
+    TUD_BOS_WEBUSB_DESCRIPTOR(WEBUSB_VENDOR_CODE, 0),
+};
+
+uint8_t const *tud_descriptor_bos_cb(void)
+{
+    return desc_bos;
 }
 
 /* ---- Configuration Descriptor ---- */
