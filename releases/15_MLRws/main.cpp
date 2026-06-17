@@ -305,23 +305,68 @@ public:
 		__dmb();
 	}
 
+	static void run_mext_until_disconnect(uint8_t first_byte, bool has_first_byte)
+	{
+		monome_ws_init(MONOME_WS_TRANSPORT_DEVICE, 0);
+		monome_ws_connect(0);
+		if (has_first_byte)
+			monome_ws_rx_feed(&first_byte, 1);
+
+		s_card_->mode_ = Mode::DeviceMLR;
+		__dmb();
+
+		while (tud_cdc_n_connected(0)) {
+			tud_task();
+			if (tud_cdc_n_available(0) > 0) {
+				uint8_t b = 0;
+				tud_cdc_n_read(0, &b, 1);
+				if (sample_mgr_wake_byte(b))
+					run_sample_manager_until_disconnect(b, false);
+				else
+					monome_ws_rx_feed(&b, 1);
+			}
+			monome_ws_task();
+			mlr_io_task();
+			service_panel_vu_leds_core1();
+			service_grid_redraw_core1();
+		}
+
+		monome_ws_disconnect();
+		s_card_->mode_ = Mode::DeviceGridless;
+		__dmb();
+	}
+
 	static void run_device_gridless_core1_loop()
 	{
 		device_mode_init();  /* pre-init so it's ready if needed */
+		bool prev_connected = false;
 		while (true) {
 			tud_task();
 
-			/* ---- Monitor CDC: if a sample-manager byte arrives, transition ---- */
-			if (tud_cdc_n_connected(0) && tud_cdc_n_available(0) > 0) {
-				uint8_t peek = 0;
-				tud_cdc_n_read(0, &peek, 1);
+			bool connected = tud_cdc_n_connected(0);
 
-				if (sample_mgr_wake_byte(peek)) {
-					run_sample_manager_until_disconnect(peek, true);
+			if (connected && !prev_connected) {
+				/* New CDC connection: peek briefly to distinguish sample-manager
+				 * (sends an ASCII command immediately) from a mext grid proxy
+				 * (connects and waits for the firmware to send discovery queries). */
+				uint8_t peek = 0;
+				bool has_byte = false;
+				absolute_time_t deadline = make_timeout_time_ms(500);
+				while (!time_reached(deadline)) {
+					tud_task();
+					if (tud_cdc_n_available(0) > 0) {
+						tud_cdc_n_read(0, &peek, 1);
+						has_byte = true;
+						break;
+					}
 				}
-				/* else: unknown byte — ignore, stay in gridless mode */
+				if (has_byte && sample_mgr_wake_byte(peek))
+					run_sample_manager_until_disconnect(peek, true);
+				else
+					run_mext_until_disconnect(peek, has_byte);
 			}
 
+			prev_connected = connected;
 			mlr_io_task();
 		}
 	}
