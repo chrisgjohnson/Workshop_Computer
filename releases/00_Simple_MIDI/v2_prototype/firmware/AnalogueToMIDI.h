@@ -2,7 +2,8 @@
 #define ANALOGUE_TO_MIDI_H
 
 // Class that converts a signal in the range min_ to max_ into 7-bit values 0-127
-// No filtering, but uses hysteresis to avoid jitter (so long as noise is less than 1/128 of range)
+// No filtering, but uses hysteresis to avoid jitter
+
 class AnalogueToMIDI
 {
 public:
@@ -25,6 +26,7 @@ public:
 		{
 			in = ((in - minval) << 16) / (maxval - minval);
 		}
+		
 		if (in < 0)
 		{
 			in = 0;
@@ -34,12 +36,12 @@ public:
 			in = 65535;
 		}
 
-		// For 0-127, naive mapping to MIDI is (in >> 9)
-		// 0-511 -> 0
-		// 512-1023 -> 0
-		// etc.
-		// Extend this by half a window (256) in either direction for hysteresis
-		// and update MIDI output value if outside this window.
+		// Naive mapping of in (0-65535) to MIDI (0-127) is (in >> 9)
+		// 0-511     -> 0
+		// 512-1023  -> 1
+		// 1024-1535 -> 2  etc.
+		// Extend these 'windows' by half a window (256) in either direction,
+		// for hysteresis, and update MIDI output value if outside this window.
 		int32_t windowMax = ((currentMIDIValue + 1) << 9) + 255;
 		int32_t windowMin = (currentMIDIValue << 9) - 256;
 

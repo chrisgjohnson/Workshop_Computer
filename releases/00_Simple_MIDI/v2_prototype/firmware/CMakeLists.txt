@@ -42,3 +42,14 @@ target_sources(simple_midi_2 PUBLIC
 	${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
 	${CMAKE_CURRENT_LIST_DIR}/usb_midi_host.c
 	${CMAKE_CURRENT_LIST_DIR}/usb_midi_host_app_driver.c)
+
+# Calibration passthrough test: AudioIn millivolts -> CVOut millivolts
+add_executable(test_passthrough ${CMAKE_CURRENT_LIST_DIR}/test_passthrough.cpp)
+target_compile_options(test_passthrough PRIVATE -Wdouble-promotion -Wfloat-conversion -Wall -Wextra -mtune=cortex-m0plus)
+target_compile_definitions(test_passthrough PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
+target_link_options(test_passthrough PRIVATE -Wl,--print-memory-usage)
+target_include_directories(test_passthrough PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+target_link_libraries(test_passthrough pico_unique_id pico_stdlib pico_multicore hardware_sync hardware_dma hardware_interp hardware_i2c hardware_pwm hardware_adc hardware_spi)
+pico_add_extra_outputs(test_passthrough)
+pico_set_binary_type(test_passthrough copy_to_ram)
+pico_enable_stdio_usb(test_passthrough 0)

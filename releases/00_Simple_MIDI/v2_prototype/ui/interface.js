@@ -151,6 +151,12 @@ function showMenu()
 	calCVValues       = [];
 	calStepCount      = 0;
 	calStepBuffer     = [];
+	trimmerStep       = 0;
+	trimmerCount      = 0;
+	trimmerBuf        = [[], []];
+	trimmerMeas       = [[], []];
+	trimmerAlpha      = [null, null];
+	trimmerOrder      = [];
 
 	// Reset per-mode UI panels to initial state
 	for (const m of Object.keys(CAL_STEP_INFO))
@@ -176,7 +182,7 @@ function showMenu()
 	if (backBtnInputs) backBtnInputs.textContent = '← Cancel';
 
 	// Restore start buttons (hidden when their calibration mode is started)
-	for (const id of ['startBtn-combined', 'startBtn-inputs'])
+	for (const id of ['startBtn-combined', 'startBtn-trusted', 'startBtn-trimmer', 'startBtn-inputs'])
 	{
 		const btn = document.getElementById(id);
 		if (btn) btn.style.display = '';
@@ -184,6 +190,8 @@ function showMenu()
 
 	document.getElementById('menu').style.display = '';
 	document.getElementById('calSection-combined').style.display = 'none';
+	document.getElementById('calSection-trusted').style.display = 'none';
+	document.getElementById('calSection-trimmer').style.display = 'none';
 	document.getElementById('calSection-inputs').style.display = 'none';
 
 	updateInitialInstruction();
@@ -194,6 +202,8 @@ function showSection(mode)
 {
 	document.getElementById('menu').style.display = 'none';
 	document.getElementById('calSection-combined').style.display = 'none';
+	document.getElementById('calSection-trusted').style.display = 'none';
+	document.getElementById('calSection-trimmer').style.display = 'none';
 	document.getElementById('calSection-inputs').style.display = 'none';
 	document.getElementById(`calSection-${mode}`).style.display = 'flex';
 	updateInitialInstruction();
@@ -263,7 +273,7 @@ function updateInitialInstruction()
 		text = 'Wrong card connected &mdash; connect the Workshop System Computer.';
 	else
 		text = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the Z switch down.';
-	for (const id of ['calInstruction-combined', 'calInstruction-inputs'])
+	for (const id of ['calInstruction-combined', 'calInstruction-trusted', 'calInstruction-trimmer', 'calInstruction-inputs'])
 	{
 		const el = document.getElementById(id);
 		if (el) el.innerHTML = text;
@@ -369,6 +379,20 @@ const CAL_STEP_INFO = {
 		{ label: '\u2713', text: 'Calibration complete.',
 		  match: () => calState === CAL.DONE },
 	],
+	trimmer: [
+		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b>.',
+		  match: () => calState === CAL.WAIT_AUDIO1 },
+		{ label: '2', text: 'Connect the <b>bottom oscillator</b> sine output to <b>Audio In 2</b>.',
+		  match: () => calState === CAL.WAIT_AUDIO2 },
+		{ label: '3', text: 'Use the oscillator knobs to set both oscillators to around <b>261 Hz (C4)</b>. Make sure the FM knobs are fully anti-clockwise and no cables are connected to the pitch inputs. Waiting for both to be stable in range&hellip;',
+		  match: () => calState === CAL.WAIT_FREQ },
+		{ label: '4', text: 'Connect <b>CV Out 1</b> to the <b>top oscillator</b> pitch input&hellip;',
+		  match: () => calState === CAL.WAIT_CV1 },
+		{ label: '5', text: 'Connect <b>CV Out 2</b> to the <b>bottom oscillator</b> pitch input&hellip;',
+		  match: () => calState === CAL.WAIT_CV2 },
+		{ label: '&#8635;', text: () => trimmerInstructionText(),
+		  match: () => calState === CAL.LIVE_TRACK },
+	],
 	trusted: [
 		{ label: '1', text: 'Connect the oscillator sine or triangle output to <b>Audio In 1</b>.',
 		  match: () => calState === CAL.WAIT_AUDIO1 },
@@ -439,7 +463,7 @@ const CAL_STEP_INFO = {
 		{ label: '9', text: 'Calibrating &mdash; do not adjust anything.',
 		  match: () => calState === CAL.TUNING && combinedPhase === 1 },
 		{ label: '\u2713', text: () => standaloneMode
-			? 'Calibration complete.<br><br>Remove all patch cables from the Computer, then click the button to continue to input calibration.'
+			? 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer and continue to input calibration.'
 			: 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer.',
 		  match: () => calState === CAL.DONE && combinedPhase === 1 },
 	],
@@ -644,6 +668,74 @@ function liveTrackTick(hz)
 }
 
 ////////////////////////////////////////////////////////////
+// Trimmer adjustment - simultaneous dual-channel live tracking
+
+function shuffleTrimmerOrder()
+{
+	trimmerOrder = TRIMMER_TRACK_MVS.map((_, i) => i);
+	for (let i = trimmerOrder.length - 1; i > 0; i--)
+	{
+		const j = Math.floor(Math.random() * (i + 1));
+		[trimmerOrder[i], trimmerOrder[j]] = [trimmerOrder[j], trimmerOrder[i]];
+	}
+}
+
+function startTrimmerLiveTrack()
+{
+	trimmerStep  = 0;
+	trimmerCount = 0;
+	trimmerBuf   = [[], []];
+	trimmerMeas  = [[], []];
+	trimmerAlpha = [null, null];
+	shuffleTrimmerOrder();
+	calState = CAL.LIVE_TRACK;
+	const mv = TRIMMER_TRACK_MVS[trimmerOrder[0]];
+	sendMV(0, mv);
+	sendMV(1, mv);
+	updateCalUI();
+}
+
+// Called from updateDisplay2 with the current hz from both Audio Ins.
+// Both channels are driven by the same mV value, measured simultaneously.
+function trimmerLiveTrackTick(hz1, hz2)
+{
+	trimmerCount++;
+	if (trimmerCount <= TRIMMER_SETTLE) return;
+
+	trimmerBuf[0].push(hz1);
+	trimmerBuf[1].push(hz2);
+	if (trimmerBuf[0].length < TRIMMER_COLLECT) return;
+
+	const mv = TRIMMER_TRACK_MVS[trimmerOrder[trimmerStep]];
+	trimmerMeas[0].push({ mv, hz: avg(trimmerBuf[0]) });
+	trimmerMeas[1].push({ mv, hz: avg(trimmerBuf[1]) });
+	trimmerStep++;
+	trimmerCount = 0;
+	trimmerBuf   = [[], []];
+
+	if (trimmerStep >= TRIMMER_TRACK_MVS.length)
+	{
+		for (let ch = 0; ch < 2; ch++)
+		{
+			const mvs = trimmerMeas[ch].map(d => d.mv);
+			const l2s = trimmerMeas[ch].map(d => Math.log2(d.hz));
+			trimmerAlpha[ch] = linReg(mvs, l2s).slope * 1000;
+		}
+		trimmerStep = 0;
+		trimmerMeas = [[], []];
+		shuffleTrimmerOrder();
+		updateCalUI();
+	}
+
+	if (trimmerStep < TRIMMER_TRACK_MVS.length)
+	{
+		const mv = TRIMMER_TRACK_MVS[trimmerOrder[trimmerStep]];
+		sendMV(0, mv);
+		sendMV(1, mv);
+	}
+}
+
+////////////////////////////////////////////////////////////
 // Sweep parameters (pitch calibration modes)
 const CAL_STEPS        = 60;
 const CAL_MIN_CV       = -160000;
@@ -666,6 +758,12 @@ const CV_TEST_HIGH = 43691;
 const LIVE_TRACK_CVS     = [-128000, -87382, -43691, 0, 43691, 87382, 128000];
 const LIVE_TRACK_SETTLE  = 3;   // D| messages to discard after each CV change
 const LIVE_TRACK_COLLECT = 5;   // D| messages to average per point
+
+// Trimmer adjustment: simultaneous dual-channel live tracking using calibrated mV
+// Sweep +-3V (6 octaves) in 7 steps; calibrated CV outs give accurate absolute tracking.
+const TRIMMER_TRACK_MVS = [-3000, -2000, -1000, 0, 1000, 2000, 3000];
+const TRIMMER_SETTLE    = 3;   // D| messages to discard after each CV step
+const TRIMMER_COLLECT   = 5;   // D| messages to average per point
 
 // WAIT_FREQ stability parameters
 const FREQ_WIN          = 15;
@@ -740,6 +838,14 @@ let liveTrackCVOrder  = [];   // shuffled indices into LIVE_TRACK_CVS for curren
 let liveTrackLastMeas = [];   // last completed 3-point cycle, for graph overlay
 let liveAlpha2        = null; // latest computed alpha2 from 3-point regression
 
+// Trimmer adjustment live-track sub-state
+let trimmerStep  = 0;
+let trimmerCount = 0;
+let trimmerBuf   = [[], []];
+let trimmerMeas  = [[], []];  // [{mv, hz}] per channel for the current cycle
+let trimmerAlpha = [null, null];
+let trimmerOrder = [];
+
 // Input calibration state
 let calInputIndex     = 0;          // which input we are currently sweeping (0–3)
 let inputCalData      = [[], [], [], []];  // [{cv, adc}] per input channel
@@ -767,6 +873,13 @@ function sendCV(channel, val)
 function sendInputMV(mv)
 {
 	const str = `M|${mv}|`;
+	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
+}
+
+// Send calibrated millivolt value to either CV output (M|/M2| commands).
+function sendMV(channel, mv)
+{
+	const str = channel === 0 ? `M|${mv}|` : `M2|${mv}|`;
 	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
 }
 
@@ -831,6 +944,24 @@ function startCalibration(mode)
 	{
 		combinedPhase = 0;
 		const btn = document.getElementById('startBtn-combined');
+		if (btn) btn.style.display = 'none';
+	}
+
+	if (mode === 'trusted')
+	{
+		const btn = document.getElementById('startBtn-trusted');
+		if (btn) btn.style.display = 'none';
+	}
+
+	if (mode === 'trimmer')
+	{
+		trimmerStep  = 0;
+		trimmerCount = 0;
+		trimmerBuf   = [[], []];
+		trimmerMeas  = [[], []];
+		trimmerAlpha = [null, null];
+		trimmerOrder = [];
+		const btn = document.getElementById('startBtn-trimmer');
 		if (btn) btn.style.display = 'none';
 	}
 
@@ -1008,7 +1139,10 @@ function updateDisplay2(hz)
 	}
 	else if (calState === CAL.LIVE_TRACK)
 	{
-		liveTrackTick(hz);
+		if (calMode === 'trimmer')
+			trimmerLiveTrackTick(latestHz1, hz);
+		else
+			liveTrackTick(hz);
 	}
 }
 
@@ -1097,6 +1231,18 @@ function cvTestTick(hz, channel)
 				calState   = CAL.TUNING;
 				calChannel = 0;
 				startCalSweep();
+			}
+			else if (channel === 0 && calMode === 'trimmer')
+			{
+				// Trimmer mode: CV Out 1 confirmed on top osc - wait for CV Out 2 on bottom osc
+				calState      = CAL.WAIT_CV2;
+				cvTestPhase   = 0;
+				cvTestWarning = '';
+			}
+			else if (channel === 1 && calMode === 'trimmer')
+			{
+				// Trimmer mode: CV Out 2 confirmed on bottom osc - start dual live tracking
+				startTrimmerLiveTrack();
 			}
 			else
 			{
@@ -1384,6 +1530,65 @@ function makeLiveTrackSlider(alpha1, alpha2live)
 }
 
 ////////////////////////////////////////////////////////////
+// Trimmer adjustment UI helpers
+
+function makeTrimmerSlider(ch)
+{
+	const alpha = trimmerAlpha[ch];
+	const col   = CH_COLOR[ch];
+	const name  = ch === 0 ? 'Top oscillator' : 'Bottom oscillator';
+	if (alpha === null)
+		return `<div style="margin-bottom:10px"><b style="color:${col}">${name}</b>: measuring&hellip;</div>`;
+
+	const RANGE = 2.0;
+	const GOOD  = 0.05;
+	const pct   = (alpha - 1.0) * 100;
+	const toPos = v => Math.max(0, Math.min(100, (v + RANGE) / (2 * RANGE) * 100));
+	const mPos  = toPos(pct).toFixed(1);
+	const gLeft = toPos(-GOOD).toFixed(1);
+	const gW    = (toPos(GOOD) - toPos(-GOOD)).toFixed(1);
+	const inGood = Math.abs(pct) < GOOD;
+	const mCol  = inGood ? '#2a7' : '#c04000';
+	const sign  = pct >= 0 ? '+' : '';
+	const label = inGood ? 'tracking ok ✔' : `${sign}${pct.toFixed(2)}%`;
+	return `<div style="margin-bottom:10px">` +
+		`<div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-bottom:3px">` +
+		`<span><b style="color:${col}">${name}</b></span>` +
+		`<span style="color:${mCol};font-weight:bold;font-family:'SF Mono','Fira Mono','Consolas',monospace">${label}</span>` +
+		`</div>` +
+		`<div style="position:relative;height:16px;background:#e8e8e8;border-radius:3px;overflow:hidden">` +
+		`<div style="position:absolute;left:${gLeft}%;width:${gW}%;height:100%;background:#c8efc8"></div>` +
+		`<div style="position:absolute;left:${mPos}%;transform:translateX(-50%);width:3px;height:100%;background:${mCol}"></div>` +
+		`</div>` +
+		`<div style="display:flex;justify-content:space-between;font-size:0.65rem;color:#bbb;margin-top:2px">` +
+		`<span>&minus;2%</span><span>0%</span><span>+2%</span></div>` +
+		`</div>`;
+}
+
+function trimmerChannelInstruction(ch)
+{
+	const alpha = trimmerAlpha[ch];
+	const name  = ch === 0 ? 'Top' : 'Bottom';
+	if (alpha === null) return '';
+	const pct = (alpha - 1.0) * 100;
+	if (Math.abs(pct) < 0.05) return `<b>${name} oscillator</b>: tracking correctly.`;
+	const ALPHA_RANGE = 1.0 - 82 / 92;
+	const turns = Math.abs(1.0 - alpha) / (ALPHA_RANGE / 30);
+	const dir   = pct > 0 ? 'anticlockwise' : 'clockwise';
+	const over  = pct > 0 ? 'over-tracks' : 'under-tracks';
+	return `<b>${name} oscillator</b> ${over} by ${Math.abs(pct).toFixed(2)}% &mdash; ` +
+		`turn trimmer <b>${dir}</b> by <b>${turnsText(turns)}</b>.`;
+}
+
+function trimmerInstructionText()
+{
+	if (trimmerAlpha[0] === null && trimmerAlpha[1] === null)
+		return 'Adjust the oscillator trimmers to achieve 1&nbsp;V/oct tracking. Measuring&hellip;';
+	const lines = [0, 1].map(trimmerChannelInstruction).filter(Boolean);
+	return lines.join('<br><br>') || 'Measuring&hellip;';
+}
+
+////////////////////////////////////////////////////////////
 // UI update - targets the active mode's panel elements
 
 function updateCalUI()
@@ -1494,17 +1699,24 @@ function updateCalUI()
 			}
 			else if (calState === CAL.LIVE_TRACK)
 			{
-				let alpha1 = null;
-				if (calData[0].length >= 2)
+				if (calMode === 'trimmer')
 				{
-					const cvs0 = calData[0].map(d => d.cv);
-					const l2_0 = calData[0].map(d => Math.log2(d.hz));
-					alpha1 = linReg(cvs0, l2_0).slope * CV_TEST_HIGH;
+					progEl.innerHTML = makeTrimmerSlider(0) + makeTrimmerSlider(1);
 				}
-				if (alpha1 !== null && liveAlpha2 !== null)
-					progEl.innerHTML = makeLiveTrackSlider(alpha1, liveAlpha2);
 				else
-					progEl.textContent = 'Measuring\u2026';
+				{
+					let alpha1 = null;
+					if (calData[0].length >= 2)
+					{
+						const cvs0 = calData[0].map(d => d.cv);
+						const l2_0 = calData[0].map(d => Math.log2(d.hz));
+						alpha1 = linReg(cvs0, l2_0).slope * CV_TEST_HIGH;
+					}
+					if (alpha1 !== null && liveAlpha2 !== null)
+						progEl.innerHTML = makeLiveTrackSlider(alpha1, liveAlpha2);
+					else
+						progEl.textContent = 'Measuring\u2026';
+				}
 			}
 			else if (calState === CAL.DONE)
 			{
@@ -1527,6 +1739,7 @@ function updateCalUI()
 		const showEeprom = calState === CAL.DONE &&
 			calMode !== 'osctracking' &&
 			calMode !== 'inputs' &&
+			calMode !== 'trusted' &&
 			!(calMode === 'combined' && combinedPhase === 0) &&
 			!(standaloneMode && calMode === 'combined');
 		eepromPanel.style.display = showEeprom ? 'flex' : 'none';
@@ -1538,7 +1751,12 @@ function updateCalUI()
 
 	const standalonePanel = document.getElementById(`standalonePanel${pfx}`);
 	if (standalonePanel)
-		standalonePanel.style.display = (standaloneMode && calState === CAL.DONE && calMode === 'combined' && combinedPhase === 1) ? 'flex' : 'none';
+	{
+		const showStandalone =
+			(standaloneMode && calState === CAL.DONE && calMode === 'combined' && combinedPhase === 1) ||
+			(calMode === 'trusted' && calState === CAL.DONE);
+		standalonePanel.style.display = showStandalone ? 'flex' : 'none';
+	}
 
 	const remeasurePanel = document.getElementById(`remeasurePanel${pfx}`);
 	if (remeasurePanel)
@@ -1600,7 +1818,7 @@ function linReg(xs, ys)
 
 function drawCalGraphs()
 {
-	if (!calMode || calMode === 'inputs') return;
+	if (!calMode || calMode === 'inputs' || calMode === 'trimmer') return;
 	drawAtResiduals(`graphAtRes-${calMode}`);
 }
 
