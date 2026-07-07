@@ -1,4 +1,4 @@
-draft: true
+
 Name: Reverb+
 Description: Reverb effect, plus a configurable toolkit of MIDI/pulse/CV utilities
 Language: C (RPi Pico SDK)
@@ -21,23 +21,23 @@ manual: |
 panel:
   inputs:
     - id: AudioIn1
-      name: Reverb Input 
-      description: Reverb input; summed with second input into mono reverb input
+      name: Reverb Input+ 
+      description: Summed with inverted IN- to form mono reverb input
     - id: AudioIn2
-      name: Reverb Input (Inverted)
-      description: Reverb input; inverted then summed into mono reverb input
+      name: Reverb Input-
+      description: Inverted then summed with IN+ to form reverb input
     - id: CVIn1
       name: CV Input 1
-      description: Assignable CV input (default: adds to reverb decay)
+      description: "Default: adds to reverb decay"
     - id: CVIn2
       name: CV Input 2
-      description: Assignable CV input (default: adds to reverb wet/dry)
+      description: "Default: adds to reverb wet/dry"
     - id: PulseIn1
       name: Pulse Input 1
-      description: Assignable pulse input (default: freeze reverb)
+      description: "Default: freeze reverb"
     - id: PulseIn2
       name: Pulse Input 2
-      description: Assignable pulse input (default: clock Turing machine)
+      description: "Default: clock Turing machine"
   outputs:
     - id: AudioOut1
       name: Reverb Output Left
@@ -47,65 +47,61 @@ panel:
       description: Stereo reverb output (right)
     - id: CVOut1
       name: CV Out 1
-      description: Assignable CV output (default: stepped random noise at 60BPM)
+      description: "Default: stepped random noise at 60BPM"
     - id: CVOut2
       name: CV Out 2
-      description: Assignable CV output (default: the analogue output of an 8-step Turing Machine, with 10% chance of flipping each bit)
+      description: "Default: the analogue output of an 8-step Turing Machine, with 10% chance of flipping each bit"
     - id: PulseOut1
       name: Pulse Out 1
-      description: Assignable pulse output (default: outputs a short (~2ms) trigger pulse at a fixed 120bpm)
+      description: "Default: outputs a short (~2ms) trigger pulse at a fixed 120bpm"
     - id: PulseOut2
       name: Pulse Out 2
-      description: Assignable pulse output (default: output of a Bernoulli gate, that toggles between high and low with a 10% probability at each trigger pulse)
+      description: "Default: output of a Bernoulli gate, that toggles between high and low with a 10% probability at each trigger pulse"
    
 
 controls:
+  switch:
+    up:
+      name: Noise gate off
+      description: The input signal passes directly into the reverberator
+    middle:
+      name: Noise gate on
+      description: A noise gate is applied to the combined reverb input, useful for noisy input signals with long periods of silence.
+    down:
+      name: Reverb Freeze
+      description: "The reverb is frozen: the input to the reverb is muted and the reverb decay is extended to infinity."
   knobs:
-    - when: { z: any }
-      main:
-        name: Main knob
-        description: Defaults to reverb wet/dry
-      x:
-        name: Knob X
-        description: Defaults to reverb decay
-      y:
-        name: Knob Y
-        description: Defaults to reverb tone
-    - when: { z: up }
-      main:
-        name: Noise gate off
-        description: The input signal passes directly into the reverberator
-    - when: { z: middle }
-      main:
-        name: Noise gate on
-        description: A noise gate is applied to the combined reverb input, useful for noisy input signals with long periods of silence.
-    - when: { z: down, gesture: momentary }
-      main:
-        name: Reverb Freeze
-        description: The reverb is frozen: the input to the reverb is muted and the reverb decay is extended to infinity.
-
+    main:
+      name: Reverb wet/dry
+      description: Can be re-assigned in the web editor
+    x:
+      name: Reverb decay
+      description: Can be re-assigned in the web editor
+    y:
+      name: Reverb tone
+      description: Can be re-assigned in the web editor
+        
   leds:
-    - when: { z: any }
-      display: list
-      items:
-        - id: LED0
-          name: Wet Level High
-          description: Upper segment of wet-output VU meter
-        - id: LED2
-          name: Wet Level Mid
-          description: Middle segment of wet-output VU meter
-        - id: LED4
-          name: Wet Level Low
-          description: Lower segment of wet-output VU meter
-        - id: LED1
-          name: Input Clip
-          description: Indicates clipping on reverb input path
-        - id: LED3
-          name: Pulse Out 1 State
-          description: Mirrors PulseOut1 gate/trigger activity
-        - id: LED5
-          name: Pulse Out 2 State
-          description: Mirrors PulseOut2 gate/trigger activity
+    display: list
+    items:
+      - id: LED0
+        name: Wet Level High
+        description: Upper segment of wet-output VU meter
+      - id: LED2
+        name: Wet Level Mid
+        description: Middle segment of wet-output VU meter
+      - id: LED4
+        name: Wet Level Low
+        description: Lower segment of wet-output VU meter
+      - id: LED1
+        name: Input Clip
+        description: Indicates clipping on reverb input path
+      - id: LED3
+        name: Pulse Out 1 State
+        description: Mirrors PulseOut1 gate/trigger activity
+      - id: LED5
+        name: Pulse Out 2 State
+        description: Mirrors PulseOut2 gate/trigger activity
 
 host:
   usb:
@@ -114,4 +110,4 @@ host:
       description: Web MIDI config editor for assigning knob/CV/pulse routing and utility behavior
     - name: USB MIDI Device/Host
       role: midi
-      description: Supports USB MIDI device and host modes (device only on 2024 Workshop Systems)
+      description: Supports USB MIDI device and host modes (USB device only on 2024 Workshop Systems)
