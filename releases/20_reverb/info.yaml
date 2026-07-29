@@ -1,4 +1,4 @@
-
+draft: true
 Name: Reverb+
 Description: Reverb effect, plus a configurable toolkit of MIDI/pulse/CV utilities
 Language: C (RPi Pico SDK)
@@ -6,6 +6,8 @@ Creator: Chris Johnson
 Version: 1.5
 Status: Released
 Editor: https://www.musicthing.co.uk/web_config/reverb.html
+date-created: 2024-11-30
+date-updated: 2026-04-11
 
 tags:
   - effect
@@ -24,8 +26,8 @@ panel:
       name: Reverb Input+ 
       description: Summed with inverted IN- to form mono reverb input
     - id: AudioIn2
-      name: Reverb Input-
-      description: Inverted then summed with IN+ to form reverb input
+      name: Reverb Input Right (Inverted)
+      description: Fixed reverb input contribution, summed into mono reverb input
     - id: CVIn1
       name: CV Input 1
       description: "Default: adds to reverb decay"
