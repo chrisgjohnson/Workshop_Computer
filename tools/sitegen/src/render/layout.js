@@ -1,6 +1,6 @@
 import { applyContentSecurityPolicy, CSP_PLACEHOLDER } from './csp.js';
 
-export function renderLayout({ title, content, relativeRoot = '.', legacyRedirectRoot = relativeRoot, repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer', showProgramIdentity = false, programCardCount = null }) {
+export function renderLayout({ title, content, relativeRoot = '.', legacyRedirectRoot = relativeRoot, repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer', showProgramIdentity = false }) {
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -36,9 +36,8 @@ export function renderLayout({ title, content, relativeRoot = '.', legacyRedirec
         <span class="program-cards__identity-name">Program Cards</span>
       </a>
       <nav class="program-cards__links" aria-label="Program card links">
-        <a href="${relativeRoot}/archive/">All cards${Number.isFinite(Number(programCardCount)) ? ` (${Number(programCardCount)})` : ''}</a>
-        <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/">Installation</a>
-        <a href="${repoUrl}">Make a card</a>
+        <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/" target="_blank" rel="noopener noreferrer">Installation <span aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a>
+        <a href="${repoUrl}" target="_blank" rel="noopener noreferrer">Make a card <span aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a>
       </nav>
     </header>` : ''}
     ${content}

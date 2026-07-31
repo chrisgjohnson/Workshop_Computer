@@ -4,13 +4,16 @@
 // catalogue-filters.js wires them by id and adapts to whichever collection the
 // page renders - curated shelves on the index, one-line rows on the archive.
 
-export function renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref, linkText, label = 'Filter programs' }) {
+// linkId marks the link as the index's all-cards toggle: catalogue-filters.js
+// intercepts it to reveal the full list in place. Without JS it stays an
+// ordinary link to the archive page.
+export function renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref, linkText, linkId = '', label = 'Filter programs' }) {
   return `<section class="filter-bar" aria-label="${label}">
     <div class="search-bar-row">
       <div class="search-wrapper">
         <div class="search-control">
           <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
-          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards">
+          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards" autofocus>
           <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
         </div>
       </div>
@@ -34,7 +37,7 @@ export function renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkH
           </fieldset>
         </div>
       </details>
-      <a class="filter-link" href="${linkHref}">${linkText}</a>
+      <a class="filter-link"${linkId ? ` id="${linkId}"` : ''} href="${linkHref}">${linkText}</a>
       <button id="connectToggle" class="connect-toggle connect-toggle--search" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
         <span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span>
       </button>

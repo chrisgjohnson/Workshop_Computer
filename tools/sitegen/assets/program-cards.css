@@ -23,7 +23,9 @@
   margin: 8px 0 24px;
 }
 
-.program-card-page a:not(.program-card-tag) {
+/* Tag badges and buttons carry their own ink colour: this rule is more specific
+   than the button rules below, so it has to opt them out explicitly. */
+.program-card-page a:not(.program-card-tag):not(.program-card-action):not(.btn) {
   color: var(--program-card-link);
 }
 

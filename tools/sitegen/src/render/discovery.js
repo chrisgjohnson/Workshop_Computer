@@ -175,7 +175,7 @@ function renderArchiveRow(card, root) {
   const flairFilter = flair.map(f => f.id);
   const authorTagFilter = (Array.isArray(card.tags) ? card.tags : []).map(tag => curation.slugify(tag)).filter(Boolean);
   const tagFilter = [...new Set([...flairFilter, ...authorTagFilter])].join(' ');
-  return `<article class="program-card-archive-row" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
+  return `<article class="program-card-archive-row" data-creator="${escapeAttr(card.metadata?.creator || '')}" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
     <a class="program-card-archive-row__link" href="${root}/programs/${card.slug}/">
       <span class="program-card-archive-row__number">${esc(number)}</span>
       <span class="program-card-archive-row__main"><span class="program-card-archive-row__heading"><span class="program-card-archive-row__title">${esc(card.title)}</span>${card.metadata?.creator ? `<span class="program-card-archive-row__byline">by ${esc(card.metadata.creator)}</span>` : ''}</span>${summary ? `<span class="program-card-archive-row__summary">${esc(truncate(summary, 120))}</span>` : ''}</span>
@@ -184,8 +184,14 @@ function renderArchiveRow(card, root) {
   </article>`;
 }
 
+// The index search results reuse these rows verbatim, so both pages present a
+// single-column list in the same format.
+export function renderArchiveRows(cards, root = '..') {
+  return cards.map(card => renderArchiveRow(card, root)).join('');
+}
+
 export function renderArchive(cards, root = '..') {
-  const rows = cards.map(card => renderArchiveRow(card, root)).join('');
+  const rows = renderArchiveRows(cards, root);
   return `<section class="program-card-archive">
     <header class="program-card-shelf__header"><h2>Complete index</h2></header>
     <div class="program-card-archive-list">${rows}</div>

@@ -9,7 +9,7 @@ import { githubPagesBase, copyWebAssets } from './discover/webEditor.js';
 import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
 import { infoYamlJsonSchema } from './schema/infoYamlJsonSchema.js';
 import { renderCardArticle, renderReadmeAndDocs } from './render/cardPage.js';
-import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
+import { renderDiscovery, renderArchive, renderArchiveRows } from './render/discovery.js';
 import { renderFilterBar } from './render/filterBar.js';
 import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
@@ -288,7 +288,8 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
 
   // Index page
   const discoveryHtml = renderDiscovery(normalizedCards, '.');
-  const resultsTiles = normalizedCards.map(card => renderTile(card, { root: '.', showAllTags: true, showCreator: true })).join('');
+  // Results use the same one-line rows as the archive page.
+  const resultsRows = renderArchiveRows(normalizedCards, '.');
   const creatorOptions = ['<option value="">All</option>'].concat(
     Array.from(creatorSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
   ).join('');
@@ -326,16 +327,15 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
     showProgramIdentity: true,
-    programCardCount: normalizedCards.length,
   repoUrl: `https://github.com/${REPO}`,
     content: `
-${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: 'archive/', linkText: `Browse all ${normalizedCards.length} cards` })}
+${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: 'archive/', linkText: `Browse all ${normalizedCards.length} cards`, linkId: 'all-cards-toggle' })}
 <div class="program-cards program-cards--index">
   ${discoveryHtml}
   <div id="search-results" hidden>
-    <section class="program-card-shelf">
-      <header class="program-card-shelf__header"><h2>Results <span id="cards-count"></span></h2></header>
-      <div class="program-card-grid program-card-grid--list">${resultsTiles}</div>
+    <section class="program-card-archive">
+      <header class="program-card-shelf__header"><h2 id="cards-count"></h2></header>
+      <div class="program-card-archive-list">${resultsRows}</div>
       <p id="no-results" class="program-card-empty" hidden>No matching cards.</p>
     </section>
   </div>
@@ -379,8 +379,8 @@ ${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: 'archive/
     <h1>All cards</h1>
     <nav class="program-cards__links" aria-label="Program card links">
       <a href="../index.html">Program cards home</a>
-      <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/">Installation</a>
-      <a href="https://github.com/${REPO}">Make a card</a>
+      <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/" target="_blank" rel="noopener noreferrer">Installation <span aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a>
+      <a href="https://github.com/${REPO}" target="_blank" rel="noopener noreferrer">Make a card <span aria-hidden="true">↗</span><span class="sr-only"> (opens in a new tab)</span></a>
     </nav>
   </header>
   ${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: '../index.html', linkText: 'Program cards home', label: 'Search cards' })}
