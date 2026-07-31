@@ -409,9 +409,9 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
 
   const hero = `<header class="program-card-hero">
     <div class="program-card-hero__main">
-      ${basic ? '' : renderTags(card, flairs)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
       ${metadata.creator ? `<div class="program-card-hero__byline">By ${esc(metadata.creator)}</div>` : ''}
+      ${basic ? '' : renderTags(card, flairs)}
       ${summary ? `<p class="program-card-hero__summary">${markdownInline(summary)}</p>` : ''}
       ${basic || !memoryMarkup ? '' : `<div class="program-card-hero__meta">${memoryMarkup}</div>`}
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>

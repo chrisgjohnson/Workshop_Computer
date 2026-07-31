@@ -146,11 +146,18 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
       path.join(faviconDestDir, 'favicon.png')
     );
   }
-  if (!incremental) await ensureDir(path.join(OUT_DIR, 'assets', 'fonts'));
-  if (!incremental) await fs.copyFile(
-    path.join(ROOT, 'tools', 'sitegen', 'node_modules', '@fontsource', 'inter', 'files', 'inter-latin-800-normal.woff2'),
-    path.join(OUT_DIR, 'assets', 'fonts', 'inter-latin-800-normal.woff2')
-  );
+  if (!incremental) {
+    const fontsDir = path.join(OUT_DIR, 'assets', 'fonts');
+    const nodeModules = path.join(ROOT, 'tools', 'sitegen', 'node_modules');
+    await ensureDir(fontsDir);
+    // Variable Inter (weight axis 100-900) is the only self-hosted face; it
+    // backs both the body text and the "Workshop Panel" font (panel rendering
+    // and SVG export select their weight from its axis).
+    await fs.copyFile(
+      path.join(nodeModules, '@fontsource-variable', 'inter', 'files', 'inter-latin-wght-normal.woff2'),
+      path.join(fontsDir, 'inter-latin-wght-normal.woff2')
+    );
+  }
 
   // Copy program-card panel diagram asset
   const panelSrcDir = path.join(ROOT, 'tools', 'sitegen', 'assets', 'program_cards');
