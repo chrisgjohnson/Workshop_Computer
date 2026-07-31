@@ -76,6 +76,7 @@ function detailPage(rel) {
     card,
     flairs: curation.resolveFlair(card.id),
     panelImg: '../../assets/program_cards/Standalone_computer_rev1.svg',
+    root: '../..',
     yamlUrl,
     uf2Url,
     extraDocs: renderReadmeAndDocs({ readmeHtml, docs, includeReadme: !card.documentation?.intro }),

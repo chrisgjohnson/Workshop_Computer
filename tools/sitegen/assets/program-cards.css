@@ -23,7 +23,7 @@
   margin: 8px 0 24px;
 }
 
-.program-card-page a {
+.program-card-page a:not(.program-card-tag) {
   color: var(--program-card-link);
 }
 
@@ -364,10 +364,8 @@
   background: #707070;
 }
 
-.program-cards--index a.program-card-tag,
-.program-cards--archive a.program-card-tag,
-.program-cards--index a.program-card-tag:visited,
-.program-cards--archive a.program-card-tag:visited {
+a.program-card-tag,
+a.program-card-tag:visited {
   color: var(--program-card-tag-ink, #fff);
   text-decoration: none;
 }
@@ -1491,8 +1489,9 @@
   margin: 8px 0 24px;
 }
 
-.program-cards--index a,
-.program-cards--archive a {
+/* Tag badges carry their own ink colour and must not pick up the link colour. */
+.program-cards--index a:not(.program-card-tag),
+.program-cards--archive a:not(.program-card-tag) {
   color: var(--program-card-link);
 }
 
