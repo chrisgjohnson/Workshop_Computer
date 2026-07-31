@@ -91,10 +91,10 @@ function detailPage(rel) {
   <a class="program-card-author-link" href="../../preview/#${encodeURIComponent(rel.slug)}">Author Metadata ↗</a>
 </nav>
 ${article}
-<div class="actions actions-duo">
-  <a class="program-card-nav-link" href="../../index.html">Back to all programs</a>
-  <a class="program-card-nav-link" href="#page-top">Back to top</a>
-</div>
+<nav class="program-card-top-nav program-card-top-nav--footer" aria-label="Card navigation">
+  <a href="../../index.html">← BACK TO PROGRAM CARDS</a>
+  <a href="#page-top">Top ↑</a>
+</nav>
 `
   });
 }
