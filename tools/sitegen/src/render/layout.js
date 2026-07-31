@@ -20,7 +20,7 @@ export function renderLayout({ title, content, relativeRoot = '.', legacyRedirec
         <img src="https://www.musicthing.co.uk/images/MTM_Horiz.svg" alt="Music Thing Modular">
       </a>
       <div class="site-header-actions">
-        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav"><span class="site-menu-toggle__icon" aria-hidden="true"><span></span><span></span><span></span></span><span>Menu</span></button>
+        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span class="site-menu-toggle__icon" aria-hidden="true"><span></span><span></span><span></span></span></button>
         <nav class="site-nav" id="site-nav" aria-label="Music Thing Modular">
           <a href="https://www.musicthing.co.uk/#writing">Talking &amp; Writing</a>
           <a href="https://www.musicthing.co.uk/about/">About</a>
