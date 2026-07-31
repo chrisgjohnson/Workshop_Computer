@@ -21,8 +21,20 @@
   var sortContainer=resultsGrid||archiveList;
   var itemSelector=resultsGrid?'.program-card-tile':'.program-card-archive-row';
 
+  // Cards still visible after the last filter pass, so Enter in the search box
+  // can jump straight to the card when filtering leaves exactly one.
+  var visibleItems=[];
+
+  // "#12" searches the card number alone, rather than the whole text blob.
+  function cardNumberQuery(s){
+    var m=/^#\s*(\d+)$/.exec(s);
+    return m?parseInt(m[1], 10):null;
+  }
+
   function filterCollection(items, c, selectedTags, s){
     var shown=0;
+    var wantedNum=cardNumberQuery(s);
+    visibleItems=[];
     items.forEach(function(el){
       var cr=(el.getAttribute('data-creator')||'').toLowerCase();
       var tags=(el.getAttribute('data-tags')||'').toLowerCase().split(/\s+/);
@@ -30,9 +42,10 @@
       var ok=true;
       if(c && cr!==c) ok=false;
       if(selectedTags.length && !selectedTags.some(function(tag){ return tags.indexOf(tag) !== -1; })) ok=false;
-      if(s && st.indexOf(s)===-1) ok=false;
+      if(wantedNum!==null){ if(parseInt(el.getAttribute('data-num'), 10)!==wantedNum) ok=false; }
+      else if(s && st.indexOf(s)===-1) ok=false;
       el.style.display=ok?'':'none';
-      if(ok) shown++;
+      if(ok){ shown++; visibleItems.push(el); }
     });
     if(countEl) countEl.textContent = shown?('('+shown+')'):'';
     if(noResults) noResults.hidden = shown>0;
@@ -59,7 +72,7 @@
       // Index: reveal flat results only while filtering
       if(discoveryEl) discoveryEl.hidden = active;
       resultsEl.hidden = !active;
-      if(!active) return;
+      if(!active){ visibleItems=[]; return; }
       filterCollection(resultsGrid?resultsGrid.querySelectorAll('.program-card-tile'):[], c, selectedTags, s);
     } else if(archiveList){
       // Archive: filter rows in place
@@ -123,6 +136,15 @@
   });
   wire(searchInput, 'input');
   if(searchInput) searchInput.addEventListener('search', applyFilters);
+  if(searchInput) searchInput.addEventListener('keydown', function(e){
+    // Enter on a search that narrowed down to a single card opens that card.
+    if(e.key !== 'Enter' || visibleItems.length !== 1) return;
+    var card = visibleItems[0];
+    var link = card.querySelector('.program-card-tile__link, .program-card-archive-row__link') || card.querySelector('a[href]');
+    if(!link) return;
+    e.preventDefault();
+    window.location.href = link.href;
+  });
   if(searchClear) searchClear.addEventListener('click', function(){
     // Full reset back to the default curated view: clear search text and every filter.
     if(searchInput) searchInput.value = '';
