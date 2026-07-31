@@ -31,9 +31,9 @@ export function renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkH
             <select id="sort-mode">${sortOptions}</select>
           </div>
           <fieldset class="filter-group tag-filter-group">
-            <legend class="tag-filter-heading"><span>Tags</span><span class="tag-filter-heading__actions"><button id="clear-tags" type="button" hidden>Clear</button><button id="toggle-all-tags" type="button" aria-pressed="false">Show all</button></span></legend>
+            <legend class="tag-filter-heading"><span>Tags</span><span class="tag-filter-heading__actions"><button id="clear-tags" type="button" hidden>Clear</button></span></legend>
             <input id="filter-tag-search" class="tag-filter-search" type="search" placeholder="Search all tags…" aria-label="Search all tags" autocomplete="off">
-            <div id="filter-tags" class="tag-filter-options">${tagOptions}</div>
+            <div id="filter-tags" class="tag-filter-options">${tagOptions}<button id="toggle-all-tags" class="tag-filter-toggle-all" type="button" aria-pressed="false">Show all…</button></div>
           </fieldset>
         </div>
       </details>

@@ -137,9 +137,14 @@
     input.addEventListener('change', applyTagOptionSearch);
   });
   if(tagSearch) tagSearch.addEventListener('input', applyTagOptionSearch);
-  if(toggleAllTags) toggleAllTags.addEventListener('click', function(){
-    var showing=tagGroup.classList.toggle('is-showing-all');
+  // The label carries the state, so the button needs no pressed styling.
+  function setTagToggleLabel(showing){
+    if(!toggleAllTags) return;
     toggleAllTags.setAttribute('aria-pressed', String(showing));
+    toggleAllTags.textContent = showing ? 'Show fewer…' : 'Show all…';
+  }
+  if(toggleAllTags) toggleAllTags.addEventListener('click', function(){
+    setTagToggleLabel(tagGroup.classList.toggle('is-showing-all'));
     applyTagOptionSearch();
   });
   if(clearTags) clearTags.addEventListener('click', function(){
@@ -181,7 +186,7 @@
     tagInputs.forEach(function(input){ input.checked = false; });
     if(tagSearch) tagSearch.value = '';
     if(tagGroup) tagGroup.classList.remove('is-showing-all');
-    if(toggleAllTags) toggleAllTags.setAttribute('aria-pressed', 'false');
+    setTagToggleLabel(false);
     applyFilters();
     applyTagOptionSearch();
   }

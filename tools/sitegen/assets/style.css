@@ -72,19 +72,21 @@ a { color: var(--link); }
 .advanced-options > summary::-webkit-details-marker { display: none; }
 .advanced-options > summary::before { content: "+ "; }
 .advanced-options[open] > summary::before { content: "− "; }
-.filter-row { align-items: start; display: grid; gap: 18px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 14px; }
+.filter-row { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 3fr); margin-top: 14px; }
 .filter-group { display: grid; gap: 3px; }
-.tag-filter-group { border: 0; grid-column: span 2; margin: 0; min-width: 0; padding: 0; }
+.tag-filter-group { border: 0; margin: 0; min-width: 0; padding: 0; }
 .tag-filter-group.is-showing-all { grid-column: 1/-1; }
 .tag-filter-group legend { color: var(--muted); font-size: 10px; font-weight: var(--weight-bold); padding: 0; text-transform: uppercase; }
 .tag-filter-heading { align-items: baseline; display: flex; justify-content: space-between; width: 100%; }
 .tag-filter-heading__actions { align-items: baseline; display: flex; gap: 10px; }
-.tag-filter-heading button { background: transparent; border: 0; border-bottom: 1px solid currentColor; color: var(--text); cursor: pointer; font: var(--weight-heavy) 10px/1.2 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 0 0 2px; text-transform: uppercase; }
-.tag-filter-heading button:hover,.tag-filter-heading button:focus-visible { color: var(--accent); }
-.tag-filter-heading button[aria-pressed="true"] { background: var(--text); color: #fff; padding: 3px 5px; }
-.tag-filter-search { appearance: none; background: #fff; border: 1px solid var(--border); border-radius: 999px; color: var(--text); font: var(--weight-normal) 12px/1.2 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; margin-top: 4px; padding: 7px 10px; width: 100%; }
-.tag-filter-search:focus { border-color: var(--text); outline: 1px solid var(--text); }
-.tag-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-filter-heading button,.tag-filter-toggle-all { background: transparent; border: 0; border-bottom: 1px solid currentColor; color: var(--text); cursor: pointer; font: var(--weight-heavy) 10px/1.2 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 0 0 2px; text-transform: uppercase; }
+.tag-filter-heading button:hover,.tag-filter-heading button:focus-visible,.tag-filter-toggle-all:hover,.tag-filter-toggle-all:focus-visible { color: var(--accent); }
+/* Square-cornered like .search-control, a hair thinner, and unchanged on focus. */
+.tag-filter-search { appearance: none; background: #fff; border: 1px solid var(--text); border-radius: 0; color: var(--text); font: var(--weight-normal) 12px/1.2 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; margin-top: 4px; padding: 7px 10px; width: 100%; }
+.tag-filter-search:focus { outline: 0; }
+.tag-filter-options { align-items: baseline; display: flex; flex-wrap: wrap; gap: 6px; }
+/* Sits at the end of the badge list, wrapping with it and sharing its baseline. */
+.tag-filter-toggle-all { align-self: baseline; }
 /* Filter tags are .program-card-tag badges, so appearance comes from program-cards.css;
    these rules add only the checkbox affordances. */
 .tag-filter-option { cursor: pointer; transition: box-shadow .15s,filter .15s; }
@@ -123,6 +125,7 @@ a { color: var(--link); }
   .site-menu-enabled .site-nav:not(.is-open) { display: none; }
   .site-nav a { align-items: center; display: flex; font-size: 14px; min-height: 44px; padding: 6px 0; }
   .filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tag-filter-group { grid-column: 1/-1; }
   .footer-grid { grid-template-columns: 1fr; }
   .search-tools-row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding-top: 10px; }
   .search-tools-row .advanced-options { flex-basis: 100%; margin-top: 0; }
