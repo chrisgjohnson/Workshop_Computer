@@ -15,7 +15,7 @@ const CARD_ARTWORK = {
 
 const FEATURED_COPY = {
   '88_Blank': {
-    text: 'A blank card is a blank canvas. Install any card firmware you want from this site.',
+    text: 'A blank card is a blank canvas. Install any card firmware you want from this site. ',
     linkText: 'Learn how',
     link: 'https://www.musicthing.co.uk/workshopsystem/program-cards/install/',
   },
@@ -159,7 +159,7 @@ export function renderDiscovery(cards, root = '.') {
   const cfg = curation.discovery || {};
   const hero = cfg.hero || {};
   const heroShelf = Array.isArray(hero.featured) && hero.featured.length
-    ? renderShelf({ title: hero.title || 'Included cards', intro: hero.text, cards: hero.featured, layout: hero.layout || 'grid' }, cardsById, { featured: true, root })
+    ? renderShelf({ title: hero.title || 'Included cards', intro: hero.text, cards: hero.featured, layout: hero.layout || 'grid', hide_flairs: hero.hide_flairs }, cardsById, { featured: true, root })
     : '';
   const shelves = (cfg.shelves || []).map(shelf => renderShelf(shelf, cardsById, { root })).join('');
   return `<div id="discovery">${heroShelf}${shelves}</div>`;

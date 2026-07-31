@@ -345,11 +345,12 @@
   display: inline-block;
   font-size: 10px;
   font-weight: var(--weight-heavy);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.035em;
   line-height: 1;
   padding: 4px 7px 3px;
   text-decoration: none;
   text-transform: uppercase;
+  opacity: 0.75;
 }
 
 .program-card-tag:hover,
@@ -772,11 +773,7 @@
 }
 
 .program-card-panel-text--long {
-  line-height: 1;
   overflow-wrap: anywhere;
-  padding-bottom: 4px;
-  padding-top: 5px;
-  word-break: normal;
 }
 
 .program-card-panel__label--control {
@@ -1575,7 +1572,7 @@
 
 /* Shelves */
 .program-card-shelf {
-  margin-top: 30px;
+  margin-top: 40px;
 }
 
 .program-card-shelf:first-child {
@@ -1725,6 +1722,7 @@
   color: var(--program-card-muted);
   font-weight: var(--weight-heavy);
   display: inline-block;
+  overflow-wrap: normal;
 }
 
 .program-card-tile__name {
@@ -1737,7 +1735,7 @@
   font-weight: var(--weight-normal);
   grid-column: 2;
   line-height: 1.2;
-  margin-top: 3px;
+  margin-bottom: 3px;
 }
 
 .program-card-tile__link:hover .program-card-tile__name,
@@ -1764,7 +1762,6 @@
 
 .program-card-tile__inline-link {
   color: var(--program-card-link);
-  display: block;
   font-weight: var(--weight-bold);
   margin-top: 5px;
 }

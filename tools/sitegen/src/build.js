@@ -10,6 +10,7 @@ import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
 import { infoYamlJsonSchema } from './schema/infoYamlJsonSchema.js';
 import { renderCardArticle, renderReadmeAndDocs } from './render/cardPage.js';
 import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
+import { renderFilterBar } from './render/filterBar.js';
 import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
 import { validateInfoYaml } from './validate/validateInfoYaml.js';
@@ -303,8 +304,14 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     })
     .map(([id, label])=>{
       const flair = curation.availableFlairs.find(candidate => candidate.id === id);
-      const style = flair?.color ? ` style="--tag-selected-bg:${escapeAttr(flair.color)}"` : '';
-      return `<label class="tag-filter-option" data-tag-option data-tag-label="${escapeAttr(label.toLowerCase())}" data-tag-source="${flair ? 'flair' : 'author'}"${flair ? '' : ' hidden'}${style}><input type="checkbox" name="filter-tag" value="${escapeAttr(id)}"> <span>${escapeAttr(label)}</span></label>`;
+      // Match the badge styling used on tiles and rows (see renderFlairBadges).
+      const tagStyle = [
+        flair?.color ? `--program-card-tag-bg: ${flair.color}; --program-card-tag-border: ${flair.color};` : '',
+        flair?.textColor ? ` --program-card-tag-ink: ${flair.textColor};` : '',
+      ].join('').trim();
+      const style = tagStyle ? ` style="${escapeAttr(tagStyle)}"` : '';
+      const tagClass = flair ? `program-card-tag--${escapeAttr(id)}` : 'program-card-tag--author';
+      return `<label class="tag-filter-option program-card-tag ${tagClass}" data-tag-option data-tag-label="${escapeAttr(label.toLowerCase())}" data-tag-source="${flair ? 'flair' : 'author'}"${flair ? '' : ' hidden'}${style}><input type="checkbox" name="filter-tag" value="${escapeAttr(id)}"> <span>${escapeAttr(label)}</span></label>`;
     }).join('');
   const sortOptions = [
     ['', 'Card number'],
@@ -321,41 +328,7 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     programCardCount: normalizedCards.length,
   repoUrl: `https://github.com/${REPO}`,
     content: `
-<section class="filter-bar" aria-label="Filter programs">
-    <div class="search-bar-row">
-      <div class="search-wrapper">
-        <div class="search-control">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
-          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards">
-          <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
-        </div>
-      </div>
-    </div>
-    <div class="search-tools-row">
-      <details class="advanced-options">
-        <summary>Advanced search</summary>
-        <div class="filter-row">
-          <div class="filter-group">
-            <label for="filter-creator">Creator</label>
-            <select id="filter-creator">${creatorOptions}</select>
-          </div>
-          <div class="filter-group">
-            <label for="sort-mode">Sort</label>
-            <select id="sort-mode">${sortOptions}</select>
-          </div>
-          <fieldset class="filter-group tag-filter-group">
-            <legend class="tag-filter-heading"><span>Tags</span><span class="tag-filter-heading__actions"><button id="clear-tags" type="button" hidden>Clear</button><button id="toggle-all-tags" type="button" aria-pressed="false">Show all</button></span></legend>
-            <input id="filter-tag-search" class="tag-filter-search" type="search" placeholder="Search all tags…" aria-label="Search all tags" autocomplete="off">
-            <div id="filter-tags" class="tag-filter-options">${tagOptions}</div>
-          </fieldset>
-        </div>
-      </details>
-      <a class="filter-link" href="archive/">Browse all cards</a>
-      <button id="connectToggle" class="connect-toggle connect-toggle--search" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
-        <span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span>
-      </button>
-    </div>
-</section>
+${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: 'archive/', linkText: `Browse all ${normalizedCards.length} cards` })}
 <div class="program-cards program-cards--index">
   ${discoveryHtml}
   <div id="search-results" hidden>
@@ -409,21 +382,7 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
       <a href="https://github.com/${REPO}">Make a card</a>
     </nav>
   </header>
-  <section class="filter-bar" aria-label="Search cards">
-      <div class="search-wrapper">
-        <div class="search-control">
-          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
-          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards">
-          <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
-        </div>
-      </div>
-      <div class="filter-actions">
-        <div class="filter-group">
-          <label for="sort-mode">Sort</label>
-          <select id="sort-mode">${sortOptions}</select>
-        </div>
-      </div>
-  </section>
+  ${renderFilterBar({ creatorOptions, sortOptions, tagOptions, linkHref: '../index.html', linkText: 'Program cards home', label: 'Search cards' })}
   ${renderArchive(normalizedCards, '..')}
 </div>`
   });

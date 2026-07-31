@@ -85,14 +85,14 @@ a { color: var(--link); }
 .tag-filter-search { appearance: none; background: #fff; border: 1px solid var(--border); border-radius: 999px; color: var(--text); font: var(--weight-normal) 12px/1.2 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; margin-top: 4px; padding: 7px 10px; width: 100%; }
 .tag-filter-search:focus { border-color: var(--text); outline: 1px solid var(--text); }
 .tag-filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag-filter-option { align-items: center; border: 1px solid var(--text); border-radius: 999px; color: var(--text) !important; cursor: pointer; display: inline-flex; font-size: 11px !important; font-weight: var(--weight-bold); line-height: 1; padding: 6px 9px; text-transform: none !important; transition: background-color .15s,color .15s; }
+/* Filter tags are .program-card-tag badges, so appearance comes from program-cards.css;
+   these rules add only the checkbox affordances. */
+.tag-filter-option { cursor: pointer; transition: box-shadow .15s,filter .15s; }
 .tag-filter-option[hidden] { display: none; }
-.tag-filter-option:hover { background: #e7e7e7; }
 .tag-filter-option:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
-.tag-filter-option:has(input:checked) { background: var(--tag-selected-bg,var(--text)); border-color: var(--tag-selected-bg,var(--text)); color: #fff !important; }
+.tag-filter-option:has(input:checked) { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--text); }
 .tag-filter-option input { height: 1px; opacity: 0; position: absolute; width: 1px; }
-.filter-bar label { color: var(--muted); font-size: 10px; font-weight: var(--weight-bold); text-transform: uppercase; }
-.filter-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.filter-bar label:not(.tag-filter-option) { color: var(--muted); font-size: 10px; font-weight: var(--weight-bold); text-transform: uppercase; }
 
 /* Shared functional controls */
 .btn { background: var(--text); border: 1px solid var(--text); border-radius: 0; color: #fff; cursor: pointer; display: inline-block; font: var(--weight-heavy) 12px/1.1 "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 9px 12px; text-decoration: none; text-transform: uppercase; }
@@ -131,7 +131,8 @@ a { color: var(--link); }
   .advanced-options > summary,
   .filter-link { align-items: center; display: inline-flex; min-height: 44px; }
   .search-clear { min-height: 44px; min-width: 44px; }
-  .tag-filter-option { min-height: 44px; padding: 9px 12px; }
+  /* inline-flex (not the badge's inline-block) so the label centres in the 44px target */
+  .filter-bar .tag-filter-option { align-items: center; display: inline-flex; min-height: 44px; padding: 9px 12px; }
   .btn,
   .connect-toggle { align-items: center; display: inline-flex; min-height: 44px; }
 }
