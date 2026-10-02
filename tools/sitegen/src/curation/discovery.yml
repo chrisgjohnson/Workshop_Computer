@@ -14,7 +14,7 @@
 # - `id` is a stable admin key; `title` is the visible heading.
 # - `intro` is optional. Most shelves read better without one.
 # - Use either `cards` for an explicit card-ID list, or `cards_from_flairs` to pull from flairs.yml.
-# - `limit` caps flair-driven shelves.
+# - Flair-driven shelves are reverse-sorted by card date (updated, then created) before `limit` caps them.
 # - `hide_flairs` suppresses redundant badges inside that shelf, e.g. hide `new` on a New shelf.
 # - `layout` is optional:
 #   - omit it for the normal 3-column card grid
@@ -52,10 +52,10 @@ shelves:
     title: Essentials 
     layout: video-lead
     cards:
+      - 369_Asterisk
+      - 22_sheep
       - 44_Birds
       - 21_resonator
-      - 42_backyard_rain
-      - 66_stretchcore
 
   - id: new
     title: Recommended new releases
@@ -66,47 +66,39 @@ shelves:
       - new
     limit: 8
 
+
+  - id: vos-collection
+    title: The Vos collection
+    layout: video-strip
+    cards:
+      - 54_Tapegrade
+      - 433_sense_of_space
+      - 87_fr330hfr33
+      - 101_Gnarly_C1ZZL3
+
+
+
+  - id: generative-sequencers
+    title: Generative sequencers
+    layout: video-lead
+    cards:
+      - 36_GradualProcess
+      - 16_the_bells
+      - 79_Slag
+      - 82_Computer_Grids
+
+
+
   - id: dune-collection
     title: The Dune collection
     layout: video-strip
     cards:
-      - 04_BYO_Benjolin
       - 15_MLRws
       - 41_blackbird
       - 11_goldfish
+      - 04_BYO_Benjolin
 
 
-#   - id: generative-sequencers
-#     title: Generative sequencers
-#     layout: list
-#     cards:
-#       - 16_the_bells
-#       - 19_CA_Sequencer
-#       - 36_GradualProcess
-#       - 60_markov
-#       - 74_Wild_Pebble
-#       - 82_Computer_Grids
-
-  - id: samples-and-found-sound
-    title: Samples and found sound
-    layout: video-lead
-    cards:
-      - 66_stretchcore
-      - 53_glitter
-      - 67_Fragments
-      - 73_VSS
-      - 95_offair2
-      - 433_sense_of_space
-
-
-  - id: vincent-collection
-    title: The Vincent collection
-    layout: video-strip
-    cards:
-      - 26_clockwork
-      - 45_bends
-      - 50_flux
-      - 51_grains
 
       
   - id: properly-useful
@@ -127,13 +119,33 @@ shelves:
       - magic
     limit: 6
 
-  - id: feedback-laboratory
-    title: Feedback laboratory
+  - id: vincent-collection
+    title: The Vincent collection
+    layout: video-strip
+    cards:
+      - 45_bends
+      - 50_flux
+      - 51_grains
+      - 26_clockwork
+
+
+  - id: samples-and-found-sound
+    title: Samples and found sound
     layout: video-lead
     cards:
-      - 32_vink
-      - 35_FreqShift
-      - 59_BitPhase
-      - 76_hot_fuzz
-      - 83_Origami
-      - 97_alloy
+      - 66_stretchcore
+      - 67_Fragments
+      - 53_glitter
+      - 73_VSS
+
+
+#   - id: feedback-laboratory
+#     title: Feedback laboratory
+#     layout: video-lead
+#     cards:
+#       - 32_vink
+#       - 35_FreqShift
+#       - 59_BitPhase
+#       - 76_hot_fuzz
+#       - 83_Origami
+#       - 97_alloy
