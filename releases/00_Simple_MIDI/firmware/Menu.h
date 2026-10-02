@@ -9,7 +9,9 @@ class Menu : public ComputerCard
 	void __not_in_flash_func(ProcessSample)() override final
 	{
 		sampleCount++;
-		if (sampleCount >= 720) // 15 ms at 48 kHz
+		// ComputerCard pre-loads the switch filter on the first few samples,
+		// so a short wait (15 ms at 48 kHz) is enough for a settled reading
+		if (sampleCount >= 720)
 		{
 			cal = (SwitchVal() == Switch::Down);
 			Abort();

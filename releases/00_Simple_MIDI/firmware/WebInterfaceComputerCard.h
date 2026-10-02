@@ -59,35 +59,75 @@ public:
 		isUSBMIDIHost = (USBPowerState() == DFP);
 	}
 
+	// True if in host mode and the connected device can accept MIDI from us
+	// (configured, and has a MIDI OUT endpoint).
+	bool HostCanSend()
+	{
+		return midiDevAddr != 0 && tuh_midi_configured(midiDevAddr) && tuh_midih_get_num_tx_cables(midiDevAddr) > 0;
+	}
+
 	// Call to send (potentially large amounts of) data over MIDI.
-	// Blocks until all data has been queued for sending.
+	// Blocks until all data has been queued for sending, but gives up (dropping the
+	// remaining data) if there is no connection, or if no progress is made for 50 ms.
 	void MIDIStreamWriteBlocking(uint8_t cable, uint8_t const *data, uint32_t size)
 	{
 		uint32_t sent = 0;
+		uint32_t lastProgressUs = time_us_32();
 		while (sent < size)
 		{
 			uint32_t n;
 			if (isUSBMIDIHost)
 			{
-				n = (midiDevAddr != 0);
-				if (n)
+				if (!HostCanSend())
 				{
-					n = tuh_midi_stream_write(midiDevAddr, cable, data + sent, size - sent);
+					return;
+				}
+				n = tuh_midi_stream_write(midiDevAddr, cable, data + sent, size - sent);
+				if (!n)
+				{
+					// TX FIFO full: it is only emptied by flushing
+					tuh_midi_stream_flush(midiDevAddr);
+					tuh_task();
 				}
 			}
 			else
 			{
+				if (!tud_midi_mounted())
+				{
+					return;
+				}
 				n = tud_midi_stream_write(cable, data + sent, size - sent);
+				if (!n)
+				{
+					tud_task();
+				}
 			}
 			sent += n;
 
-			if (!n)
+			uint32_t now = time_us_32();
+			if (n)
 			{
-				if (isUSBMIDIHost)
-					tuh_task();
-				else
-					tud_task();
+				lastProgressUs = now;
 			}
+			else if (now - lastProgressUs > 50000)
+			{
+				return;
+			}
+		}
+	}
+
+	// Non-blocking send of a single MIDI channel message (note, CC, pitch bend etc).
+	// Returns false, and the message is dropped, if there is no connection or no room to queue it.
+	bool MIDIMessageWrite(uint8_t cable, uint8_t status, uint8_t data1, uint8_t data2)
+	{
+		uint8_t packet[4] = { uint8_t((cable << 4) | (status >> 4)), status, data1, data2 };
+		if (isUSBMIDIHost)
+		{
+			return HostCanSend() && tuh_midi_packet_write(midiDevAddr, packet);
+		}
+		else
+		{
+			return tud_midi_mounted() && tud_midi_packet_write(packet);
 		}
 	}
 
@@ -152,6 +192,15 @@ public:
 					}
 				}
 			}
+
+			// Detect loss of connection, so that the application can release held notes
+			bool connected = isUSBMIDIHost ? (midiDevAddr != 0) : (tud_mounted() && !tud_suspended());
+			if (wasConnected && !connected)
+			{
+				midiQueueRead = midiQueueWrite; // discard any queued messages
+				MIDIDisconnected();
+			}
+			wasConnected = connected;
 
 			MIDICore();
 		}
@@ -229,6 +278,10 @@ public:
 	// New virtual function, overridden in specific class
 	virtual void MIDICore() {}
 
+	// New virtual function, overridden in specific class.
+	// Called on core 0 when the USB MIDI connection is lost (device unplugged, host suspended etc).
+	virtual void MIDIDisconnected() {}
+
 	// New virtual function, overridden in specific class
 	virtual void ProcessIncomingSysEx(uint8_t *, uint32_t) {} // data, size
 
@@ -267,6 +320,7 @@ private:
 	static constexpr unsigned rxBufSize = 64;
 	bool sysexActive;
 	unsigned sysexLen;
+	bool wasConnected = false;
 	uint8_t rxBuf[rxBufSize];
 
 	// State for parsing MIDI channel messages (running status)

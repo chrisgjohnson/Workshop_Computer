@@ -1,5 +1,6 @@
 #pragma once
 #include "WebInterfaceComputerCard.h"
+#include "hardware/sync.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,11 +53,20 @@ public:
 
 class Calibration : public WebInterfaceComputerCard
 {
-	volatile int32_t durationSum[2], durationCount[2];
-	volatile int32_t rawSum[2], rawCount[2], rawSumCv[2], rawCountCv[2];
-	volatile int32_t calMvSumAudio[2], calMvCountAudio[2];
-	volatile int32_t calMvSumCv[2], calMvCountCv[2];
-	volatile int32_t rawMaxAbs[2] = { 0, 0 };
+	// Measurement accumulators. Only ever modified by core 1 (ProcessSample).
+	// Core 0 sets snapshotRequest; core 1 then copies acc to snapshot, zeroes acc
+	// and clears snapshotRequest, so no accumulated sample is lost or double-counted.
+	struct Accumulators
+	{
+		int32_t durationSum[2], durationCount[2];
+		int32_t rawSum[2], rawSumCv[2];
+		int32_t calMvSumAudio[2], calMvSumCv[2];
+		int32_t rawMaxAbs[2];
+		int32_t sampleCount;
+	};
+	Accumulators acc = {};
+	Accumulators snapshot = {};
+	volatile bool snapshotRequest = false;
 
 	RisingEdgeCounter rec[2];
 
@@ -66,33 +76,79 @@ class Calibration : public WebInterfaceComputerCard
 	bool inputEepromWriteReady = false;
 	uint8_t inputEepromBuf[EEPROM_INPUT_NUM_BYTES] = {};
 
-	void writePageToEEPROM(unsigned int eeAddress, const uint8_t *data, int length)
+	// Set by core 0 SysEx handler, consumed by CalibrationMIDICore: which regions to erase
+	bool eepromClearReady = false;
+	bool eepromClearCvOuts = false;
+	bool eepromClearInputs = false;
+
+	// Write up to one 16-byte page to EEPROM. Returns false on I2C failure or timeout.
+	bool WritePageToEEPROM(unsigned int eeAddress, const uint8_t *data, int length)
 	{
-		if (length > 16) length = 16;
+		if (length > 16)
+		{
+			length = 16;
+		}
 		uint8_t deviceAddress = EEPROM_PAGE_ADDRESS | ((eeAddress >> 8) & 0x0F);
 		uint8_t data2[17];
 		data2[0] = eeAddress & 0xFF;
-		for (int i = 0; i < length; i++) data2[i + 1] = data[i];
-		i2c_write_blocking(i2c0, deviceAddress, data2, length + 1, false);
+		for (int i = 0; i < length; i++)
+		{
+			data2[i + 1] = data[i];
+		}
+		if (i2c_write_timeout_us(i2c0, deviceAddress, data2, length + 1, false, 10000) != length + 1)
+		{
+			return false;
+		}
+
+		// Acknowledge polling: EEPROM NAKs until its internal write cycle (typ. < 5 ms) completes
+		absolute_time_t deadline = make_timeout_time_ms(20);
 		uint8_t dummy;
-		while (i2c_read_blocking(i2c0, deviceAddress, &dummy, 1, false) != 1) {}
+		while (i2c_read_timeout_us(i2c0, deviceAddress, &dummy, 1, false, 1000) != 1)
+		{
+			if (time_reached(deadline))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
-	void flushToEEPROM(unsigned int startAddr, const uint8_t *buf, int total)
+	// Write a buffer to EEPROM, splitting at page boundaries. Returns false on failure.
+	bool FlushToEEPROM(unsigned int startAddr, const uint8_t *buf, int total)
 	{
 		unsigned int eeAddr = startAddr;
 		int remaining = total, offset = 0;
 		while (remaining > 0)
 		{
 			int pageSize = 16 - (int)(eeAddr % 16);
-			if (pageSize > remaining) pageSize = remaining;
-			writePageToEEPROM(eeAddr, buf + offset, pageSize);
+			if (pageSize > remaining)
+			{
+				pageSize = remaining;
+			}
+			if (!WritePageToEEPROM(eeAddr, buf + offset, pageSize))
+			{
+				return false;
+			}
 			eeAddr += pageSize;
 			offset += pageSize;
 			remaining -= pageSize;
 		}
-		uint8_t msg[] = { 'S', '|' };
-		SendSysEx(msg, 2);
+		return true;
+	}
+
+	// Reply to the web UI after an EEPROM operation: "<op>|" on success, "F|<op>|" on failure
+	void SendEEPROMResult(bool ok, char op)
+	{
+		if (ok)
+		{
+			uint8_t msg[] = { (uint8_t)op, '|' };
+			SendSysEx(msg, 2);
+		}
+		else
+		{
+			uint8_t msg[] = { 'F', '|', (uint8_t)op, '|' };
+			SendSysEx(msg, 4);
+		}
 	}
 
 	void CalibrationMIDICore()
@@ -103,13 +159,32 @@ class Calibration : public WebInterfaceComputerCard
 		if (eepromWriteReady)
 		{
 			eepromWriteReady = false;
-			flushToEEPROM(0, eepromBuf, EEPROM_NUM_BYTES);
+			SendEEPROMResult(FlushToEEPROM(0, eepromBuf, EEPROM_NUM_BYTES), 'S');
 		}
 
 		if (inputEepromWriteReady)
 		{
 			inputEepromWriteReady = false;
-			flushToEEPROM(EEPROM_INPUT_ADDR, inputEepromBuf, EEPROM_INPUT_NUM_BYTES);
+			SendEEPROMResult(FlushToEEPROM(EEPROM_INPUT_ADDR, inputEepromBuf, EEPROM_INPUT_NUM_BYTES), 'S');
+		}
+
+		// Erase the selected calibration regions (0xFF = erased EEPROM state).
+		// Invalid magic numbers mean default calibration is used on next power-up.
+		if (eepromClearReady)
+		{
+			eepromClearReady = false;
+			uint8_t blank[EEPROM_NUM_BYTES > EEPROM_INPUT_NUM_BYTES ? EEPROM_NUM_BYTES : EEPROM_INPUT_NUM_BYTES];
+			memset(blank, 0xFF, sizeof(blank));
+			bool ok = true;
+			if (eepromClearCvOuts)
+			{
+				ok = FlushToEEPROM(0, blank, EEPROM_NUM_BYTES) && ok;
+			}
+			if (eepromClearInputs)
+			{
+				ok = FlushToEEPROM(EEPROM_INPUT_ADDR, blank, EEPROM_INPUT_NUM_BYTES) && ok;
+			}
+			SendEEPROMResult(ok, 'X');
 		}
 
 		uint32_t now = time_us_32();
@@ -123,26 +198,29 @@ class Calibration : public WebInterfaceComputerCard
 		{
 			char buf[128];
 
-			// Atomically read and zero a sum/count accumulator pair, returning the average.
-			auto drain = [](volatile int32_t &sum, volatile int32_t &count) -> float {
-				int32_t n = count; count = 0;
-				int32_t s = sum;   sum   = 0;
-				return n > 0 ? (float)s / (float)n : 0.0f;
+			// Ask core 1 to snapshot and zero the accumulators; it does so within one sample period
+			snapshotRequest = true;
+			while (snapshotRequest)
+			{
+			}
+			__dmb();
+			const Accumulators &sn = snapshot;
+
+			auto average = [](int32_t sum, int32_t count) -> float {
+				return count > 0 ? (float)sum / (float)count : 0.0f;
 			};
 
 			float freq[2], a[2], cv[2], aMv[2], cvMv[2];
 			for (int i = 0; i < 2; i++)
 			{
-				freq[i] = drain(durationSum[i],    durationCount[i]);
-				a[i]    = drain(rawSum[i],          rawCount[i]);
-				cv[i]   = drain(rawSumCv[i],        rawCountCv[i]);
-				aMv[i]  = drain(calMvSumAudio[i],   calMvCountAudio[i]);
-				cvMv[i] = drain(calMvSumCv[i],      calMvCountCv[i]);
+				freq[i] = average(sn.durationSum[i],   sn.durationCount[i]);
+				a[i]    = average(sn.rawSum[i],        sn.sampleCount);
+				cv[i]   = average(sn.rawSumCv[i],      sn.sampleCount);
+				aMv[i]  = average(sn.calMvSumAudio[i], sn.sampleCount);
+				cvMv[i] = average(sn.calMvSumCv[i],    sn.sampleCount);
 			}
-			int sig0 = rawMaxAbs[0] > 500 ? 1 : 0;
-			int sig1 = rawMaxAbs[1] > 500 ? 1 : 0;
-			rawMaxAbs[0] = 0;
-			rawMaxAbs[1] = 0;
+			int sig0 = sn.rawMaxAbs[0] > 500 ? 1 : 0;
+			int sig1 = sn.rawMaxAbs[1] > 500 ? 1 : 0;
 			int len = snprintf(buf, sizeof(buf), "D|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%d|%d|%.2f|%.2f|%.2f|%.2f",
 			                   (double)freq[0], (double)freq[1],
 			                   (double)a[0], (double)a[1],
@@ -157,9 +235,11 @@ class Calibration : public WebInterfaceComputerCard
 
 		if (now - lastConnSend >= 100000)
 		{
-			char buf[16];
-			int len = snprintf(buf, sizeof(buf), "K|%d|%d|%d|%d|",
-			                   Connected(Audio1), Connected(Audio2), Connected(CV1), Connected(CV2));
+			// Jack connections, then whether CV out / input calibration was loaded from EEPROM at power-up
+			char buf[24];
+			int len = snprintf(buf, sizeof(buf), "K|%d|%d|%d|%d|%d|%d|",
+			                   Connected(Audio1), Connected(Audio2), Connected(CV1), Connected(CV2),
+			                   CVOutsCalibrated(), InputsCalibrated());
 			SendSysEx((uint8_t *)buf, (uint32_t)len);
 			lastConnSend = now;
 		}
@@ -177,30 +257,36 @@ public:
 		for (int i = 0; i < 2; i++)
 		{
 			int32_t sample = AudioIn(i);
-			int32_t filtered = sample;
-			int32_t d = rec[i].GetDuration(filtered);
+			int32_t d = rec[i].GetDuration(sample);
 			if (d > 0)
 			{
 				int32_t freq = (48000 << 8) / d;
 				if (freq > 15 && freq < 10000)
 				{
-					durationSum[i] += d;
-					durationCount[i]++;
+					acc.durationSum[i] += d;
+					acc.durationCount[i]++;
 				}
 			}
 
 			int32_t absSample = sample < 0 ? -sample : sample;
-			if (absSample > rawMaxAbs[i]) rawMaxAbs[i] = absSample;
+			if (absSample > acc.rawMaxAbs[i])
+			{
+				acc.rawMaxAbs[i] = absSample;
+			}
 
-			rawSum[i] += sample;
-			rawCount[i]++;
-			calMvSumAudio[i] += AudioInMillivolts(i);
-			calMvCountAudio[i]++;
+			acc.rawSum[i] += sample;
+			acc.calMvSumAudio[i] += AudioInMillivolts(i);
+			acc.rawSumCv[i] += CVIn(i);
+			acc.calMvSumCv[i] += CVInMillivolts(i);
+		}
+		acc.sampleCount++;
 
-			rawSumCv[i] += CVIn(i);
-			rawCountCv[i]++;
-			calMvSumCv[i] += CVInMillivolts(i);
-			calMvCountCv[i]++;
+		if (snapshotRequest)
+		{
+			snapshot = acc;
+			acc = {};
+			__dmb();
+			snapshotRequest = false;
 		}
 	}
 
@@ -249,7 +335,18 @@ public:
 			inputEepromWriteReady = true;
 			return;
 		}
-		
+
+		// "X|<target>|" - clear calibration data from EEPROM.
+		// target: 'C' = CV outs only, 'I' = inputs (audio and CV) only, anything else = both
+		if (data[0] == 'X' && data[1] == '|')
+		{
+			uint8_t target = size >= 4 ? data[2] : 'A';
+			eepromClearCvOuts = (target != 'I');
+			eepromClearInputs = (target != 'C');
+			eepromClearReady = true;
+			return;
+		}
+
 		// "M|<mv>|" - set CV out 1 to given millivolt value (used during input calibration sweep)
 		if (data[0] == 'M' && data[1] == '|')
 		{

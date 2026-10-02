@@ -94,6 +94,16 @@ public:
 			notesDown[val].velocity = -1;
 		}
 	}
+	// Release all notes
+	void Clear()
+	{
+		for (unsigned i = 0; i < NUM_NOTES; i++)
+		{
+			notesDown[i] = NoteDown();
+		}
+		lastNoteDown = -1;
+	}
+
 	int8_t LastNoteDown() const
 	{
 		return lastNoteDown;

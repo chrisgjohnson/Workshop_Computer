@@ -12,6 +12,7 @@ class MidiToCv : public WebInterfaceComputerCard
 {
 	// Shared state: written by MIDICore (Core 0), read by ProcessSample (Core 1)
 	volatile int16_t midiAudioOut[2] = { 0, 0 };
+	volatile uint8_t midiCC42[2] = { 0, 0 };
 	volatile uint8_t lastPlayedNote[2] = { 60, 60 };
 	volatile bool midiGate[2] = { false, false };
 	volatile int16_t pitchbend[2] = { 0, 0 };
@@ -25,6 +26,12 @@ class MidiToCv : public WebInterfaceComputerCard
 		{0, 4095}, {0, 4095}, {0, 4095}, {0, 127},
 		{-2048, 2047}, {-2048, 2047}, {-2048, 2047}, {-2048, 2047}
 	};
+
+	void AllNotesOff(int ch)
+	{
+		nds[ch].Clear();
+		midiGate[ch] = false;
+	}
 
 	constexpr static uint8_t NOTE_ON = 0x90, NOTE_OFF = 0x80, MIDI_CC = 0xB0, PITCH_BEND = 0xE0;
 	void MIDIInterfaceCore()
@@ -56,9 +63,15 @@ class MidiToCv : public WebInterfaceComputerCard
 					else
 						midiGate[ch] = false;
 				}
+				else if (type == MIDI_CC && (msg.data1 == 120 || msg.data1 == 123)) // All Sound Off / All Notes Off
+				{
+					AllNotesOff(ch);
+				}
 				else if (type == MIDI_CC && msg.data1 == 42) // MIDI CC 42 output on audio out jacks
 				{
-					midiAudioOut[ch] = (int16_t)(msg.data2 * 16);
+					// CC 0-127 --> approx -5V to +5V (-1692 to +1710), matching Simple MIDI v0.6.6
+					midiCC42[ch] = msg.data2;
+					midiAudioOut[ch] = (int16_t)(((int32_t)msg.data2 * 3402) / 127 - 1692);
 				}
 				else if (type == PITCH_BEND)
 				{
@@ -86,8 +99,11 @@ class MidiToCv : public WebInterfaceComputerCard
 				int8_t v = ccProcessors[i].GetMIDIValueIfNew();
 				if (v >= 0)
 				{
-					uint8_t out[3] = { 0xB0, ccNums[i], (uint8_t)v };
-					MIDIStreamWriteBlocking(0, out, 3);
+					// Non-blocking: if the message can't be queued, retry on the next pass
+					if (!MIDIMessageWrite(0, MIDI_CC, ccNums[i], (uint8_t)v))
+					{
+						ccProcessors[i].MarkUnsent();
+					}
 				}
 			}
 		}
@@ -99,7 +115,7 @@ public:
 		for (int i = 0; i < 2; i++)
 		{
 			AudioOut(i, midiAudioOut[i]);
-			LedBrightness(i, midiAudioOut[i] << 1);
+			LedBrightness(i, midiCC42[i] << 5);
 			// Apply pitch bend: ±2 semitones, pitchbend ±8192 -> subNote ±512 (1/256 semitone units)
 			int32_t currentPitch = ((int32_t)lastPlayedNote[i] << 8) + (pitchbend[i] >> 4);
 			if (currentPitch < 0) currentPitch = 0;
@@ -125,5 +141,15 @@ public:
 	void MIDICore() override
 	{
 		MIDIInterfaceCore();
+	}
+
+	// Release gates and reset pitch bend if the USB connection is lost, so notes don't hang
+	void MIDIDisconnected() override
+	{
+		for (int i = 0; i < 2; i++)
+		{
+			AllNotesOff(i);
+			pitchbend[i] = 0;
+		}
 	}
 };

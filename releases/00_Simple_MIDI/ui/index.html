@@ -4,12 +4,17 @@
     <meta charset="utf-8">
 	<title>Simple MIDI Calibration</title>
 	<meta name="description" content="Web interface for the Simple MIDI card of the Music Thing Workshop System Computer">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
 	<style>
 	  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+	  b, strong { font-weight: 600; }
+
 	  body {
-		  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+		  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
 		  background: #fff;
 		  color: #111;
 		  min-height: 100vh;
@@ -29,7 +34,7 @@
 	  }
 	  #pageHeader h1 {
 		  font-size: 2rem;
-		  font-weight: 800;
+		  font-weight: 700;
 		  letter-spacing: -0.5px;
 		  line-height: 1;
 	  }
@@ -46,7 +51,7 @@
 		  top: 20px;
 		  right: 28px;
 		  font-size: 0.75rem;
-		  font-weight: 700;
+		  font-weight: 600;
 		  letter-spacing: 1px;
 		  text-transform: uppercase;
 		  color: #aaa;
@@ -78,20 +83,11 @@
 	  .menu-option:active { background: #eee; }
 	  .menu-option-title {
 		  font-size: 1.1rem;
-		  font-weight: 800;
+		  font-weight: 700;
 		  letter-spacing: -0.3px;
 		  display: flex;
 		  align-items: center;
 		  gap: 12px;
-	  }
-	  .menu-option-tag {
-		  font-size: 0.6rem;
-		  font-weight: 800;
-		  letter-spacing: 1.5px;
-		  text-transform: uppercase;
-		  color: #fff;
-		  background: #111;
-		  padding: 3px 8px;
 	  }
 	  .menu-option-desc {
 		  margin-top: 8px;
@@ -106,7 +102,7 @@
 		  color: #999 !important;
 		  border: 1.5px solid #ddd;
 		  font-size: 0.72rem !important;
-		  font-weight: 700 !important;
+		  font-weight: 600 !important;
 		  letter-spacing: 1px !important;
 		  padding: 7px 14px !important;
 		  align-self: flex-start;
@@ -116,32 +112,19 @@
 	  .back-btn:active { background: #eee !important; }
 
 	  /* ── Calibration sections (shared) ── */
-	  #calSection-combined, #calSection-trusted, #calSection-trimmer, #calSection-inputs {
+	  #calSection-combined, #calSection-trusted, #calSection-trimmer, #calSection-inputs, #calSection-erase {
 		  display: none;
 		  flex-direction: column;
 		  gap: 24px;
 	  }
-	  #calSection-combined, #calSection-trusted, #calSection-trimmer, #calSection-inputs {
+	  #calSection-combined, #calSection-trusted, #calSection-trimmer, #calSection-inputs, #calSection-erase {
 		  align-items: center;
 		  text-align: center;
 	  }
 
-	  .calPanel {
-		  border: 2px solid #111;
-		  padding: 28px 32px;
-		  display: flex;
-		  flex-direction: column;
-		  gap: 20px;
-	  }
-	  .cal-header {
-		  display: flex;
-		  align-items: center;
-		  justify-content: space-between;
-		  gap: 16px;
-	  }
 	  .calSteps {
 		  font-size: 0.75rem;
-		  font-weight: 700;
+		  font-weight: 600;
 		  letter-spacing: 1.5px;
 		  text-transform: uppercase;
 		  color: #aaa;
@@ -160,7 +143,7 @@
 	  }
 	  #calProgress-combined, #calProgress-trusted, #calProgress-trimmer, #calProgress-inputs { width: 100%; }
 
-	  .eepromPanel, .calNextPanel {
+	  .eepromPanel {
 		  display: none;
 		  align-items: center;
 		  gap: 16px;
@@ -178,7 +161,7 @@
 		  border: none;
 		  font-family: inherit;
 		  font-size: 0.8rem;
-		  font-weight: 800;
+		  font-weight: 700;
 		  letter-spacing: 1.5px;
 		  text-transform: uppercase;
 		  padding: 12px 24px;
@@ -190,10 +173,6 @@
 	  button:disabled { background: #ccc; color: #999; cursor: default; }
 
 	  canvas { display: block; }
-
-	  /* ── Oscillator readouts (used during combined cal) ── */
-	  #noteDisplay  { color: #4b0082; }
-	  #noteDisplay2 { color: #c04000; }
 	  </style>
 
 	<script src="interface.js"></script>
@@ -213,7 +192,7 @@
 
 	  <!-- Main menu -->
 	  <div id="menu">
-		<div class="menu-option" onclick="startStandalone()">
+		<div class="menu-option" onclick="showSection('combined')">
 		  <div class="menu-option-title">Calibrate Workshop System (self-contained)</div>
 		  <div class="menu-option-desc">...if you have a Workshop System and no other 1V/octave gear to calibrate it against.</div>
 		</div>
@@ -229,6 +208,22 @@
 		  <div class="menu-option-title">Calibrate Workshop Computer inputs only</div>
 		  <div class="menu-option-desc">...if you've calibrated the Computer outputs already.</div>
 		</div>
+		<div class="menu-option" onclick="showSection('erase')">
+		  <div class="menu-option-title">Erase calibration</div>
+		  <div class="menu-option-desc">...to return CV outputs and/or inputs to default (uncalibrated) settings.</div>
+		</div>
+	  </div>
+
+	  <!-- Erase calibration from EEPROM -->
+	  <div id="calSection-erase">
+		<button class="back-btn" onclick="showMenu()">&#8592; Back</button>
+		<div id="calInstruction-erase" class="calInstruction"></div>
+		<div style="display:flex;flex-direction:column;gap:8px;text-align:left">
+		  <label><input type="checkbox" id="eraseCvOuts" onchange="updateEraseButton()"> CV output calibration</label>
+		  <label><input type="checkbox" id="eraseInputs" onchange="updateEraseButton()"> Input calibration</label>
+		</div>
+		<button id="eraseBtn" onclick="clearCalibration()">Erase selected calibration</button>
+		<div id="clearCalStatus" class="eepromStatus"></div>
 	  </div>
 
 	  <!-- CV output calibration -->
@@ -242,12 +237,9 @@
 		  <button onclick="continueToCalibration()">Continue</button>
 		</div>
 		<canvas id="graphAtRes-combined" width="500" height="250" style="display:none"></canvas>
-		<div id="eepromPanel-combined" class="eepromPanel">
-		  <button onclick="saveCalToEEPROM()">Save to Workshop Computer</button>
-		  <div id="eepromStatus-combined" class="eepromStatus"></div>
-		</div>
 		<div id="standalonePanel-combined" class="eepromPanel">
 		  <button onclick="continueStandaloneToInputs()">Save &amp; Continue to Input Calibration &#8594;</button>
+		  <div class="eepromStatus"></div>
 		</div>
 	  </div>
 
@@ -261,6 +253,7 @@
 		<canvas id="graphAtRes-trusted" width="500" height="250" style="display:none"></canvas>
 		<div id="standalonePanel-trusted" class="eepromPanel">
 		  <button onclick="continueStandaloneToInputs()">Save &amp; Continue to Input Calibration &#8594;</button>
+		  <div class="eepromStatus"></div>
 		</div>
 	  </div>
 
@@ -279,7 +272,13 @@
 		<span id="calSteps-inputs" class="calSteps"></span>
 		<div id="calInstruction-inputs" class="calInstruction"></div>
 		<div id="calProgress-inputs" class="calProgress"></div>
+		<div id="inputsOscType" style="margin-bottom:8px">
+		  CV out was calibrated using:
+		  <label><input type="radio" name="inputsOscType" value="internal" checked> Internal (Workshop System)</label>
+		  <label style="margin-left:12px"><input type="radio" name="inputsOscType" value="external"> External oscillator</label>
+		</div>
 		<button id="startBtn-inputs" onclick="startCalibration('inputs')">Start Calibration</button>
+		<div class="eepromStatus"></div>
 	  </div>
 
 	</div>

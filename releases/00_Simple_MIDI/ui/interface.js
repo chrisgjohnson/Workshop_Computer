@@ -108,15 +108,12 @@ window.onload = function()
 	MIDISetup("MTMComputer", ConnectToComputer, DisconnectFromComputer);
 }
 
-let standaloneMode = false;
-
 function showMenu()
 {
-	standaloneMode = false;
 	stopWobble();
 	sendCV(0, 0);
 	sendCV(1, 0);
-	sendInputMV(0);
+	sendMV(0, 0);
 
 	// Reset all calibration state
 	calMode           = null;
@@ -145,7 +142,6 @@ function showMenu()
 	liveTrackBuf      = [];
 	liveTrackMeas     = [];
 	liveTrackCVOrder  = [];
-	liveTrackLastMeas = [];
 	liveAlpha2        = null;
 	calStepIndex      = 0;
 	calCVValues       = [];
@@ -164,18 +160,16 @@ function showMenu()
 		const stepsEl  = document.getElementById(`calSteps-${m}`);
 		const progEl   = document.getElementById(`calProgress-${m}`);
 		const graphEl  = document.getElementById(`graphAtRes-${m}`);
-		const eepromEl = document.getElementById(`eepromPanel-${m}`);
-		const nextEl   = document.getElementById(`calNextPanel-${m}`);
 		const stEl     = document.getElementById(`standalonePanel-${m}`);
 		const contEl   = document.getElementById(`continuePanel-${m}`);
 		if (stepsEl)  stepsEl.innerHTML      = '';
 		if (progEl)   progEl.textContent     = '';
 		if (graphEl)  graphEl.style.display  = 'none';
-		if (eepromEl) eepromEl.style.display = 'none';
-		if (nextEl)   nextEl.style.display   = 'none';
 		if (stEl)     stEl.style.display     = 'none';
 		if (contEl)   contEl.style.display   = 'none';
 	}
+
+	document.querySelectorAll('[id^="calSection-"] .eepromStatus').forEach(el => { el.textContent = ''; });
 
 	// Reset inputs back button label
 	const backBtnInputs = document.getElementById('backBtn-inputs');
@@ -193,6 +187,16 @@ function showMenu()
 	document.getElementById('calSection-trusted').style.display = 'none';
 	document.getElementById('calSection-trimmer').style.display = 'none';
 	document.getElementById('calSection-inputs').style.display = 'none';
+	document.getElementById('calSection-erase').style.display = 'none';
+
+	// Reset erase section
+	document.getElementById('eraseCvOuts').checked = false;
+	document.getElementById('eraseInputs').checked = false;
+	document.getElementById('clearCalStatus').textContent = '';
+
+	// Oscillator type selector is hidden when continuing from CV out calibration (type already known)
+	document.getElementById('inputsOscType').style.display = '';
+	inputsContinued = false;
 
 	updateInitialInstruction();
 	updateStartButtons();
@@ -205,22 +209,26 @@ function showSection(mode)
 	document.getElementById('calSection-trusted').style.display = 'none';
 	document.getElementById('calSection-trimmer').style.display = 'none';
 	document.getElementById('calSection-inputs').style.display = 'none';
+	document.getElementById('calSection-erase').style.display = 'none';
 	document.getElementById(`calSection-${mode}`).style.display = 'flex';
 	updateInitialInstruction();
 }
 
-function startStandalone()
-{
-	standaloneMode = true;
-	showSection('combined');
-}
-
 function continueStandaloneToInputs()
 {
-	saveCalToEEPROM();
+	const externalOsc = calMode === 'trusted';
+	// Report the CV output save result in the inputs section, as the current section is about to be hidden.
+	// Input calibration can't start until the save is confirmed (see cvOutCalAvailable).
+	if (!saveCalToEEPROM('inputs', 'CV output calibration saved \u2714')) return;
 	showMenu();                                              // reset all state and panels
 	document.getElementById('menu').style.display = 'none'; // don't show the menu
+	// Input cal impedance correction depends on which oscillator the CV outs were just calibrated against
+	document.querySelector(`input[name="inputsOscType"][value="${externalOsc ? 'external' : 'internal'}"]`).checked = true;
+	document.getElementById('inputsOscType').style.display = 'none';
+	inputsContinued = true;
+	updateStartButtons();
 	showSection('inputs');
+	if (pendingSave) setCalStatus('inputs', 'Saving CV output calibration\u2026');  // showMenu() cleared it
 }
 
 function ConnectToComputer()
@@ -232,6 +240,8 @@ function DisconnectFromComputer()
 {
 	if (dMessageTimer) { clearTimeout(dMessageTimer); dMessageTimer = null; }
 	firmwareConnected = false;
+	sessionCvCal = [null, null];  // USB port disappears when the device restarts and loads its EEPROM
+	deviceCal    = { cvOuts: null, inputs: null };
 	updateConnectionStatus();
 }
 
@@ -263,28 +273,77 @@ function updateConnectionStatus()
 	updateInitialInstruction();
 }
 
+// Label of each mode's start button, as referred to in the instruction text
+function startLabel(mode)
+{
+	if (mode === 'inputs' && inputsContinued) return 'Continue';
+	return mode === 'trimmer' ? 'Start' : 'Start Calibration';
+}
+
+// Trimmer adjustment and input calibration send calibrated millivolts, so need calibrated CV outs:
+// either saved this session, or loaded from EEPROM by the firmware at power-up
+function needsCvOutCal(mode)
+{
+	return mode === 'trimmer' || mode === 'inputs';
+}
+
+function cvOutCalAvailable()
+{
+	return (sessionCvCal[0] !== null && sessionCvCal[1] !== null) || deviceCal.cvOuts === true;
+}
+
 function updateInitialInstruction()
 {
 	if (calMode !== null) return;  // updateCalUI() owns the text once started
-	let text;
-	if (firmwareConnected)
-		text = "Remove all patch cables from the Computer, then press <b>Start Calibration</b> to begin.";
-	else if (midiActive)
-		text = 'Wrong card connected &mdash; connect the Workshop System Computer.';
-	else
-		text = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the Z switch down.';
-	for (const id of ['calInstruction-combined', 'calInstruction-trusted', 'calInstruction-trimmer', 'calInstruction-inputs'])
+	let notConnectedText = null;
+	if (midiActive && !firmwareConnected)
+		notConnectedText = 'Wrong card connected &mdash; connect the Workshop System Computer.';
+	else if (!firmwareConnected)
+		notConnectedText = 'Connect the Workshop System Computer via USB<br>and reset the \'Simple MIDI\' card while holding the Z switch down.';
+
+	for (const mode of ['combined', 'trusted', 'trimmer', 'inputs'])
 	{
-		const el = document.getElementById(id);
-		if (el) el.innerHTML = text;
+		const el = document.getElementById(`calInstruction-${mode}`);
+		if (!el) continue;
+		if (notConnectedText)
+			el.innerHTML = notConnectedText;
+		else if (needsCvOutCal(mode) && !cvOutCalAvailable())
+			el.innerHTML = (pendingSave && pendingSave.cvCal)
+				? 'Waiting for CV output calibration to be saved&hellip;'
+				: deviceCal.cvOuts === null
+					? 'Checking CV output calibration&hellip;'
+					: '<span style="color:#c04000">The CV outputs are not calibrated.</span><br>Calibrate them first, using one of the first two options on the menu.';
+		else
+			el.innerHTML = `Remove all patch cables from the Computer, then press <b>${startLabel(mode)}</b> to begin.`;
 	}
+
+	const eraseEl = document.getElementById('calInstruction-erase');
+	if (eraseEl)
+		eraseEl.innerHTML = notConnectedText ||
+			'Choose which calibration to erase from the Workshop Computer.<br>Erased channels use default (uncalibrated) settings after the next restart.' +
+			(deviceCal.cvOuts === null ? '' :
+				`<br><br>Loaded at power-up: CV outputs <b>${deviceCal.cvOuts ? 'calibrated' : 'not calibrated'}</b>, ` +
+				`inputs <b>${deviceCal.inputs ? 'calibrated' : 'not calibrated'}</b>.`);
 }
 
 function updateStartButtons()
 {
-	document.querySelectorAll('button[onclick*="startCalibration"]').forEach(btn => {
-		btn.disabled = !firmwareConnected;
-	});
+	for (const mode of ['combined', 'trusted', 'trimmer', 'inputs'])
+	{
+		const btn = document.getElementById(`startBtn-${mode}`);
+		if (!btn) continue;
+		btn.textContent = startLabel(mode);
+		btn.disabled = !firmwareConnected || (needsCvOutCal(mode) && !cvOutCalAvailable());
+	}
+	updateEraseButton();
+}
+
+function updateEraseButton()
+{
+	const btn = document.getElementById('eraseBtn');
+	if (!btn) return;
+	const any = document.getElementById('eraseCvOuts').checked || document.getElementById('eraseInputs').checked;
+	btn.disabled = !firmwareConnected || !any || pendingClear !== null;
 }
 
 function ProcessIncomingSysEx(dataBytes)
@@ -311,18 +370,113 @@ function ProcessIncomingSysEx(dataBytes)
 		return;
 	}
 
-	// K|<a1>|<a2>|<cv1>|<cv2>|  - jack connection status
-	m = str.match(/^K\|(\d)\|(\d)\|(\d)\|(\d)\|/);
-	if (m) { handleConnection(m[1] === '1', m[2] === '1', m[3] === '1', m[4] === '1'); return; }
+	// K|<a1>|<a2>|<cv1>|<cv2>|<cvCal>|<inCal>|  - jack connection status, and whether
+	// CV out / input calibration was loaded from EEPROM at power-up
+	m = str.match(/^K\|(\d)\|(\d)\|(\d)\|(\d)\|(?:(\d)\|(\d)\|)?/);
+	if (m)
+	{
+		handleConnection(m[1] === '1', m[2] === '1', m[3] === '1', m[4] === '1');
+		if (m[5] !== undefined) setDeviceCal(m[5] === '1', m[6] === '1');
+		return;
+	}
 
 	// S|  - EEPROM write confirmation from firmware
 	m = str.match(/^S\|/);
+	if (m) { finishSave(true); return; }
+
+	// F|S| or F|X|  - EEPROM write (save or clear) failed
+	m = str.match(/^F\|([SX])\|/);
 	if (m)
 	{
-		const el = document.getElementById(`eepromStatus-${calMode || 'workshop'}`);
-		if (el) el.textContent = 'Saved \u2714 Restart device to apply new calibration.';
+		if (m[1] === 'S')
+		{
+			finishSave(false, 'Save failed: could not write to EEPROM.');
+		}
+		else
+		{
+			finishClear('Erase failed: could not write to EEPROM.');
+		}
 		return;
 	}
+
+	// X|  - EEPROM calibration clear confirmation from firmware
+	m = str.match(/^X\|/);
+	if (m)
+	{
+		if (pendingClear && pendingClear.cvOuts) sessionCvCal = [null, null];
+		const what = pendingClear ? pendingClear.what : 'Calibration';
+		finishClear(`${what} erased \u2714 Restart device to use default calibration.`);
+		return;
+	}
+}
+
+// EEPROM save awaiting confirmation from the firmware: { mode, okText, cvCal, timer }, or null.
+// cvCal is the CV out calibration being saved, used by sendMV() once the save is confirmed.
+let pendingSave = null;
+const SAVE_TIMEOUT_MS = 3000;
+
+function beginSave(mode, okText, cvCal = null)
+{
+	if (pendingSave) clearTimeout(pendingSave.timer);
+	pendingSave = {
+		mode,
+		okText,
+		cvCal,
+		timer: setTimeout(() => finishSave(false, 'No response from the Workshop Computer. Calibration may not have been saved.'), SAVE_TIMEOUT_MS)
+	};
+	setCalStatus(mode, 'Saving\u2026');
+}
+
+function finishSave(ok, failText)
+{
+	if (!pendingSave) return;
+	clearTimeout(pendingSave.timer);
+	const { mode, okText, cvCal } = pendingSave;
+	pendingSave = null;
+	if (ok && cvCal) sessionCvCal = cvCal;
+	setCalStatus(mode, ok ? okText : failText);
+	updateStartButtons();
+	updateInitialInstruction();
+}
+
+// Show a save status message in the given calibration section
+function setCalStatus(mode, text)
+{
+	document.querySelectorAll(`#calSection-${mode} .eepromStatus`).forEach(el => { el.textContent = text; });
+}
+
+// EEPROM erase awaiting confirmation from the firmware: { cvOuts, what, timer }, or null
+let pendingClear = null;
+const CLEAR_TIMEOUT_MS = 3000;
+
+function clearCalibration()
+{
+	const cvOuts = document.getElementById('eraseCvOuts').checked;
+	const inputs = document.getElementById('eraseInputs').checked;
+	if (!cvOuts && !inputs) return;
+
+	const what   = cvOuts && inputs ? 'CV output and input calibration'
+	             : cvOuts ? 'CV output calibration' : 'Input calibration';
+	const target = cvOuts && inputs ? 'A' : cvOuts ? 'C' : 'I';
+	if (!confirm(`Erase ${what.toLowerCase()} from the Workshop Computer? This cannot be undone.`)) return;
+
+	// Firmware ignores SysEx shorter than 3 bytes, so the target is always sent
+	SendSysEx(`X|${target}|`.split('').map(c => c.charCodeAt(0)));
+	pendingClear = {
+		cvOuts,
+		what,
+		timer: setTimeout(() => finishClear('No response from the Workshop Computer. Calibration may not have been erased.'), CLEAR_TIMEOUT_MS)
+	};
+	document.getElementById('clearCalStatus').textContent = 'Erasing\u2026';
+	updateEraseButton();
+}
+
+function finishClear(text)
+{
+	if (pendingClear) clearTimeout(pendingClear.timer);
+	pendingClear = null;
+	document.getElementById('clearCalStatus').textContent = text;
+	updateEraseButton();
 }
 
 ////////////////////////////////////////////////////////////
@@ -352,7 +506,8 @@ const CAL = {
 	WAIT_CV1:     'WAIT_CV1',
 	WAIT_CV2:     'WAIT_CV2',
 	TUNING:       'TUNING',
-	LIVE_TRACK:   'LIVE_TRACK',    // osctracking: fast continuous measurement while trimmer is adjusted
+	LIVE_TRACK:   'LIVE_TRACK',    // combined/trimmer: fast continuous measurement while trimmer is adjusted
+	WAIT_UNPLUG:  'WAIT_UNPLUG',   // combined: waiting for bottom osc pitch input to be unplugged, to re-measure its 0V pitch
 	WAIT_RECABLE: 'WAIT_RECABLE',  // combined: waiting for user to move CV cables between phases
 	WAIT_INPUT:   'WAIT_INPUT',    // inputs mode: waiting for user to patch and press start
 	SWEEP_INPUT:  'SWEEP_INPUT',   // inputs mode: actively sweeping CV and recording ADC
@@ -363,22 +518,6 @@ const CAL = {
 // match() returns true when that step is the currently active one.
 // text may be a string or a function returning a string (for dynamic content).
 const CAL_STEP_INFO = {
-	workshop: [
-		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b>.',
-		  match: () => calState === CAL.WAIT_AUDIO1 },
-		{ label: '2', text: 'Connect the <b>bottom oscillator</b> sine output to <b>Audio In 2</b>.',
-		  match: () => calState === CAL.WAIT_AUDIO2 },
-		{ label: '3', text: 'Use the oscillator knobs to set both oscillators to around <b>261 Hz (C4)</b>. Waiting for both to be stable in range&hellip;',
-		  match: () => calState === CAL.WAIT_FREQ },
-		{ label: '4', text: 'Connect <b>CV Out 1</b> to the top oscillator pitch input&hellip;',
-		  match: () => calState === CAL.WAIT_CV1 },
-		{ label: '5', text: 'Connect <b>CV Out 2</b> to the bottom oscillator pitch input&hellip;',
-		  match: () => calState === CAL.WAIT_CV2 },
-		{ label: '6', text: 'Calibrating &mdash; do not adjust anything.',
-		  match: () => calState === CAL.TUNING },
-		{ label: '\u2713', text: 'Calibration complete.',
-		  match: () => calState === CAL.DONE },
-	],
 	trimmer: [
 		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b>.',
 		  match: () => calState === CAL.WAIT_AUDIO1 },
@@ -425,24 +564,6 @@ const CAL_STEP_INFO = {
 		{ label: '\u2713', text: 'Calibration complete.',
 		  match: () => calState === CAL.DONE },
 	],
-	osctracking: [
-		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b>.',
-		  match: () => calState === CAL.WAIT_AUDIO1 },
-		{ label: '2', text: 'Connect the <b>bottom oscillator</b> sine output to <b>Audio In 2</b>.',
-		  match: () => calState === CAL.WAIT_AUDIO2 },
-		{ label: '3', text: 'Use the oscillator knobs to set both oscillators to around <b>261 Hz (C4)</b>. Waiting for both to be stable in range&hellip;',
-		  match: () => calState === CAL.WAIT_FREQ },
-		{ label: '4', text: 'Connect <b>CV Out 1</b> to the <b>top oscillator</b> 1V/oct input&hellip;',
-		  match: () => calState === CAL.WAIT_CV1 },
-		{ label: '5', text: 'Measuring top oscillator tracking &mdash; do not adjust anything.',
-		  match: () => calState === CAL.TUNING && calChannel === 0 },
-		{ label: '6', text: 'Disconnect CV Out 1 from the top oscillator and connect it to the <b>bottom oscillator</b> 1V/oct input&hellip;',
-		  match: () => calState === CAL.WAIT_CV2 },
-		{ label: '7', text: 'Measuring bottom oscillator tracking &mdash; do not adjust anything.',
-		  match: () => calState === CAL.TUNING && calChannel === 1 },
-		{ label: '\u2713', text: () => oscTrackingResultText(),
-		  match: () => calState === CAL.DONE || calState === CAL.LIVE_TRACK },
-	],
 	combined: [
 		{ label: '1', text: 'Connect the <b>top oscillator</b> sine output to <b>Audio In 1</b> on the Computer.<img class="instrimg" src="images/toposc_audio1.png">',
 		  match: () => calState === CAL.WAIT_AUDIO1 },
@@ -458,43 +579,24 @@ const CAL_STEP_INFO = {
 		  match: () => calState === CAL.WAIT_CV2 && combinedPhase === 0 },
 		{ label: '7', text: () => combinedLiveTrackText(),
 		  match: () => calState === CAL.LIVE_TRACK },
-		{ label: '8', text: 'Move <b>CV Out 1</b> back to the top oscillator pitch input and connect <b>CV Out 2</b> to the bottom oscillator pitch input instead &hellip;<img class="instrimg" src="images/bothoscs_cv.png">',
+		{ label: '8', text: 'Unplug <b>CV Out 1</b> from the bottom oscillator pitch input, leaving nothing connected to it. Don\'t touch the oscillator knobs.<br><br>Waiting for the bottom oscillator to settle&hellip;',
+		  match: () => calState === CAL.WAIT_UNPLUG },
+		{ label: '9', text: 'Connect <b>CV Out 1</b> to the top oscillator pitch input and <b>CV Out 2</b> to the bottom oscillator pitch input&hellip;<img class="instrimg" src="images/bothoscs_cv.png">',
 		  match: () => calState === CAL.WAIT_RECABLE },
-		{ label: '9', text: 'Calibrating &mdash; do not adjust anything.',
+		{ label: '10', text: 'Calibrating &mdash; do not adjust anything.',
 		  match: () => calState === CAL.TUNING && combinedPhase === 1 },
-		{ label: '\u2713', text: () => standaloneMode
-			? 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer and continue to input calibration.'
-			: 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer.',
+		{ label: '\u2713', text: 'Calibration complete.<br><br>If you\'re happy with the results, click the button to save them onto the Workshop Computer and continue to input calibration.',
 		  match: () => calState === CAL.DONE && combinedPhase === 1 },
 	],
 };
 
 ////////////////////////////////////////////////////////////
-// Oscillator tracking comparison result
+// Oscillator tracking (trimmer mode, and first phase of combined mode)
 
-function oscTrackingResult()
+// True during the first phase of combined calibration, which matches the two oscillators' tracking
+function oscTrackingPhase()
 {
-	if (calData[0].length < 2 || calData[1].length < 2) return null;
-
-	const cvs0 = calData[0].map(d => d.cv);
-	const l2_0 = calData[0].map(d => Math.log2(d.hz));
-	const cvs1 = calData[1].map(d => d.cv);
-	const l2_1 = calData[1].map(d => Math.log2(d.hz));
-
-	const reg0 = linReg(cvs0, l2_0);
-	const reg1 = linReg(cvs1, l2_1);
-
-	// alpha = effective V/oct coefficient: 1.0 = perfect 1V/oct, range is ~0.891–1.0
-	const alpha1 = reg0.slope * CV_TEST_HIGH;
-	const alpha2 = reg1.slope * CV_TEST_HIGH;
-
-	// Trimmer range: alpha varies from 82/92 to 1.0 over 30 turns
-	const ALPHA_RANGE = 1.0 - 82 / 92;   // 0.108696
-	const TURNS_TOTAL = 30;
-	const deltaAlpha  = alpha1 - alpha2;  // required change to alpha2 to match alpha1
-	const turns       = deltaAlpha / (ALPHA_RANGE / TURNS_TOTAL);
-
-	return { alpha1, alpha2, deltaAlpha, turns };
+	return calMode === 'combined' && combinedPhase === 0;
 }
 
 function turnsText(turns)
@@ -520,32 +622,6 @@ function turnsText(turns)
 	                 whole === 9 ? 'nine' :
 	                 whole === 10 ? 'ten' : `${whole}`;
 	return `about ${wholeStr}${fracStr} turn${quarters === 4 ? '' : 's'}`;
-}
-
-function oscTrackingResultText()
-{
-	const r = oscTrackingResult();
-	if (!r) return 'Insufficient data.';
-
-	const pctDiff  = (r.alpha2 / r.alpha1 - 1) * 100;
-	const absPct   = Math.abs(pctDiff).toFixed(2);
-	const absTurns = turnsText(r.turns);
-
-	if (Math.abs(pctDiff) < 0.05)
-		return 'Top and bottom oscillators track closely. No trimmer adjustment needed.';
-
-	const overUnder = pctDiff > 0 ? 'over-tracks' : 'under-tracks';
-	const dir       = pctDiff > 0 ? 'decrease tracking (anticlockwise)' : 'increase tracking (clockwise)';
-	const warning   = Math.abs(r.turns) > 25
-		? ' <span style="color:#c04000">(Warning: measured tracking difference between oscillators is suspiciously large. Perhaps you bumped an oscillator pitch knob?)</span>'
-		: '';
-
-	return `Bottom oscillator ${overUnder} top by <b>${absPct}%</b> ` +
-		`(\u03b1<sub>top</sub>&nbsp;=&nbsp;${r.alpha1.toFixed(3)}, ` +
-		`\u03b1<sub>bot</sub>&nbsp;=&nbsp;${r.alpha2.toFixed(3)}). ` +
-		`Turn the bottom oscillator trimmer to <b>${dir}</b> ` +
-		`by <b>${absTurns}</b>.${warning} ` +
-		`Re-run after adjustment to verify.`;
 }
 
 function combinedLiveTrackText()
@@ -575,37 +651,27 @@ function combinedLiveTrackText()
 		`or until the indicator is in the green region.<br><br>Click <b>Continue</b> when matched.`;
 }
 
-function remeasureBottomOsc()
-{
-	if ((calMode !== 'osctracking' && calMode !== 'combined') || (calState !== CAL.DONE && calState !== CAL.LIVE_TRACK)) return;
-	liveAlpha2    = null;
-	calData[1]    = [];
-	calState      = CAL.WAIT_CV2;
-	cvTestPhase   = 0;
-	cvTestWarning = '';
-	sendCV(0, 0);
-	updateCalUI();
-	drawCalGraphs();
-}
-
 function continueToCalibration()
 {
 	if (calMode !== 'combined' || calState !== CAL.LIVE_TRACK || combinedPhase !== 0) return;
-	sendCV(0, 0);
-	sendCV(1, 0);
-	cvTestPhase   = 0;
-	cvTestWarning = '';
-	calState = CAL.WAIT_RECABLE;
+	// The trimmer adjustment changes the bottom oscillator's pitch at 0V, so baseHz[1] from the
+	// start must be re-measured with the pitch input unplugged. Wobble CV Out 1 meanwhile, so the
+	// pitch can't settle until it is unplugged.
+	cvTestPhase     = 0;
+	cvTestWarning   = '';
+	freqBuf         = [[], []];
+	freqStableSince = null;
+	calState        = CAL.WAIT_UNPLUG;
+	startWobble();
 	updateCalUI();
-	drawCalGraphs();
 }
 
 function startPhase2()
 {
 	// Called automatically when CV Out 2 is detected on the bottom oscillator.
-	// Both connections are already confirmed (CV Out 1 from osctracking, CV Out 2 just detected),
+	// Both connections are already confirmed (CV Out 1 from tracking phase, CV Out 2 just detected),
 	// so skip the cvTest confirmation steps and go straight to calibration.
-	// baseHz[] is kept from the osctracking phase - oscillators are still at the same pitch.
+	// baseHz[0] is kept from the start (top oscillator untouched); baseHz[1] was re-measured in WAIT_UNPLUG.
 	combinedPhase = 1;
 	calChannel    = 0;
 	calState      = CAL.TUNING;
@@ -629,13 +695,11 @@ function startLiveTrack()
 	liveTrackCount    = 0;
 	liveTrackBuf      = [];
 	liveTrackMeas     = [];
-	liveTrackLastMeas = [];
 	liveAlpha2        = null;
 	shuffleLiveTrackOrder();
 	sendCV(1, CAL_MIN_CV);
 	sendCV(0, LIVE_TRACK_CVS[liveTrackCVOrder[0]]);
 	updateCalUI();
-	drawCalGraphs();
 }
 
 function liveTrackTick(hz)
@@ -656,12 +720,10 @@ function liveTrackTick(hz)
 		const cvs  = liveTrackMeas.map(d => d.cv);
 		const l2s  = liveTrackMeas.map(d => Math.log2(d.hz));
 		liveAlpha2        = linReg(cvs, l2s).slope * CV_TEST_HIGH;
-		liveTrackLastMeas = [...liveTrackMeas];
 		liveTrackStep     = 0;
 		liveTrackMeas     = [];
 		shuffleLiveTrackOrder();
 		updateCalUI();
-		drawCalGraphs();
 	}
 
 	sendCV(0, LIVE_TRACK_CVS[liveTrackCVOrder[liveTrackStep]]);
@@ -741,12 +803,12 @@ const CAL_STEPS        = 60;
 const CAL_MIN_CV       = -160000;
 const CAL_MAX_CV       =  160000;
 
-// Osctracking sweep: 80% of the full range (drop 10% at each end) and half the points
+// Tracking phase sweep: 80% of the full range (drop 10% at each end) and half the points
 const TRACK_STEPS  = 30;
 const TRACK_MIN_CV = -128000;
 const TRACK_MAX_CV =  128000;
 const CAL_DISCARD      = 4;
-const TRACK_DISCARD    = 12;  // longer settle for osctracking (random CV jumps can be large)
+const TRACK_DISCARD    = 12;  // longer settle for tracking phase (random CV jumps can be large)
 const CAL_STABLE_COUNT = 6;
 const CAL_STABLE_CENTS = 0.5;
 const CAL_TIMEOUT      = 50;
@@ -754,7 +816,7 @@ const CAL_TIMEOUT      = 50;
 // CV connection test: value expected to shift pitch by ~1 octave
 const CV_TEST_HIGH = 43691;
 
-/// Live tracking (osctracking LIVE_TRACK state): 7-point regression in random order
+// Live tracking (combined LIVE_TRACK state): 7-point regression in random order
 const LIVE_TRACK_CVS     = [-128000, -87382, -43691, 0, 43691, 87382, 128000];
 const LIVE_TRACK_SETTLE  = 3;   // D| messages to discard after each CV change
 const LIVE_TRACK_COLLECT = 5;   // D| messages to average per point
@@ -788,8 +850,30 @@ const DETECT_SETTLE    = 5;     // D| messages to discard after each CV change (
 const DETECT_COLLECT   = 3;     // D| messages to average per point (~60 ms)
 const DETECT_THRESHOLD = 300;   // ADC counts; ~2V swing expected to give ~800+ counts
 
+// Hardware impedances used for Audio In calibration correction.
+// CV out has R_CV_OUT_OHMS output impedance, Audio/CV ins have R_AIN_OHMS input impedance.
+// CV out calibration absorbs the load of the oscillator (Z_osc), so when the same CV out
+// is used to calibrate Audio In, the voltage at the Audio In jack differs from the calibrated
+// mV value by factor f = (Z_osc + R_out)/Z_osc * R_ain/(R_ain + R_out).
+// Multiplying mvPerAdcQ16 by f corrects AudioInMillivolts() to return actual jack voltage.
+const R_CV_OUT_OHMS       =    1000;
+const R_AIN_OHMS          =  100000;
+const Z_INTERNAL_OSC_OHMS = 1000000;  // Workshop System oscillator pitch input
+const Z_EXTERNAL_OSC_OHMS =  100000;  // assumed external oscillator pitch input
+
+function ainCalCorrectionFactor(z_osc)
+{
+	return ((z_osc + R_CV_OUT_OHMS) / z_osc) * (R_AIN_OHMS / (R_AIN_OHMS + R_CV_OUT_OHMS));
+}
+
+function getCalOscImpedance()
+{
+	if (calMode === 'trusted') return Z_EXTERNAL_OSC_OHMS;
+	if (calMode === 'inputs')  return inputsCalOscInternal ? Z_INTERNAL_OSC_OHMS : Z_EXTERNAL_OSC_OHMS;
+	return Z_INTERNAL_OSC_OHMS;   // 'combined', 'trimmer'
+}
+
 // Input channel metadata
-const IN_COLOR  = ['#4b0082', '#c04000', '#007030', '#005090'];
 const IN_NAMES  = ['Audio In 1', 'Audio In 2', 'CV In 1', 'CV In 2'];
 const IN_IMAGES = ['input_a1.png', 'input_a2.png', 'input_c1.png', 'input_c2.png'];
 
@@ -803,10 +887,22 @@ function inputStepText(i)
 ////////////////////////////////////////////////////////////
 // Calibration - shared mutable state
 
-let calMode       = null;   // 'workshop' | 'trusted' | 'inputs' | 'combined' | null when IDLE
-let calState      = CAL.IDLE;
-let calChannel    = 0;
-let combinedPhase = 0;     // 0 = osctracking phase, 1 = workshop calibration phase
+let calMode             = null;   // 'combined' | 'trusted' | 'trimmer' | 'inputs' | null when IDLE
+let calState            = CAL.IDLE;
+let calChannel          = 0;
+let combinedPhase       = 0;     // 0 = oscillator tracking phase, 1 = CV out calibration phase
+let inputsContinued     = false; // inputs section reached via Save & Continue from CV out cal (not from the menu)
+let inputsCalOscInternal = true; // for 'inputs' mode: was CV out calibrated with internal (true) or external (false) osc?
+let sessionCvCal = [null, null]; // per channel {slope, intercept, f0} of CV out cal saved since device last restarted
+let deviceCal = { cvOuts: null, inputs: null }; // calibration loaded by firmware at power-up (null = not yet reported)
+
+function setDeviceCal(cvOuts, inputs)
+{
+	if (deviceCal.cvOuts === cvOuts && deviceCal.inputs === inputs) return;
+	deviceCal = { cvOuts, inputs };
+	updateStartButtons();
+	updateInitialInstruction();
+}
 
 let conn1 = false, conn2 = false, conn3 = false, conn4 = false;
 let audio1SigSeen = false; // Audio In 1 has seen a D message value with signal
@@ -835,8 +931,7 @@ let liveTrackCount = 0;
 let liveTrackBuf   = [];
 let liveTrackMeas     = [];   // [{cv, hz}] for current cycle
 let liveTrackCVOrder  = [];   // shuffled indices into LIVE_TRACK_CVS for current cycle
-let liveTrackLastMeas = [];   // last completed 3-point cycle, for graph overlay
-let liveAlpha2        = null; // latest computed alpha2 from 3-point regression
+let liveAlpha2        = null; // latest computed alpha2 from live tracking regression
 
 // Trimmer adjustment live-track sub-state
 let trimmerStep  = 0;
@@ -870,15 +965,19 @@ function sendCV(channel, val)
 	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
 }
 
-function sendInputMV(mv)
-{
-	const str = `M|${mv}|`;
-	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
-}
-
-// Send calibrated millivolt value to either CV output (M|/M2| commands).
+// Send calibrated millivolt value to either CV output.
+// Normally uses the M|/M2| commands, which apply the calibration the firmware loaded at power-up.
+// If new calibration has been saved this session, the firmware is still using the old one,
+// so compute the raw value from the new calibration and send C|/C2| instead.
 function sendMV(channel, mv)
 {
+	const cal = sessionCvCal[channel];
+	if (cal)
+	{
+		// Same mapping as buildChannelCalPoints: 0V plays f0, one octave per volt
+		sendCV(channel, Math.round((Math.log2(cal.f0) + mv / 1000 - cal.intercept) / cal.slope));
+		return;
+	}
 	const str = channel === 0 ? `M|${mv}|` : `M2|${mv}|`;
 	SendSysEx(str.split('').map(c => c.charCodeAt(0)));
 }
@@ -893,7 +992,7 @@ function startWobble()
 {
 	if (wobbleTimer) return;
 	wobbleTimer = setInterval(() => {
-		if (calState !== CAL.WAIT_FREQ) { stopWobble(); return; }
+		if (calState !== CAL.WAIT_FREQ && calState !== CAL.WAIT_UNPLUG) { stopWobble(); return; }
 		const cv = Math.round(80000 * Math.sin(2 * Math.PI * Date.now() / 3000));
 		sendCV(0, cv);
 		sendCV(1, cv);
@@ -920,17 +1019,13 @@ function startCalibration(mode)
 	{
 		if (m === mode) continue;
 		const i = document.getElementById(`calInstruction-${m}`);
-		if (i) i.innerHTML = 'Press <b>Start Calibration</b> to begin.';
+		if (i) i.innerHTML = `Press <b>${startLabel(m)}</b> to begin.`;
 		const s = document.getElementById(`calSteps-${m}`);
 		if (s) s.innerHTML = '';
 		const p = document.getElementById(`calProgress-${m}`);
 		if (p) p.textContent = '';
 		const c = document.getElementById(`graphAtRes-${m}`);
 		if (c) c.style.display = 'none';
-		const e = document.getElementById(`eepromPanel-${m}`);
-		if (e) e.style.display = 'none';
-		const n = document.getElementById(`calNextPanel-${m}`);
-		if (n) n.style.display = 'none';
 	}
 
 	calMode       = mode;
@@ -975,6 +1070,8 @@ function startCalibration(mode)
 		detectPhase      = 0;
 		const btn = document.getElementById('startBtn-inputs');
 		if (btn) btn.style.display = 'none';
+		const oscRadio = document.querySelector('input[name="inputsOscType"]:checked');
+		inputsCalOscInternal = !oscRadio || oscRadio.value !== 'external';
 	}
 	else
 	{
@@ -1024,15 +1121,23 @@ function handleConnection(a1, a2, cv1, cv2)
 ////////////////////////////////////////////////////////////
 // Frequency stability check (mode-aware)
 
+// Channels whose pitch must settle in the current state
+function freqWaitChannels()
+{
+	if (calState === CAL.WAIT_UNPLUG) return [1];  // bottom osc only
+	return calMode === 'trusted' ? [0] : [0, 1];    // trusted mode uses Audio In 1 only
+}
+
 function freqBufStable()
 {
-	// Trusted mode: only Audio In 1 is used, so only check channel 0
-	const channels = calMode === 'trusted' ? [0] : [0, 1];
-	for (const ch of channels)
+	// When re-measuring after the trimmer adjustment the pitch need not be in FREQ_RANGE
+	// (the user can't retune it without invalidating the calibration), only stable
+	const checkRange = calState !== CAL.WAIT_UNPLUG;
+	for (const ch of freqWaitChannels())
 	{
 		const buf = freqBuf[ch];
 		if (buf.length < FREQ_WIN) return false;
-		if (buf.some(hz => hz < FREQ_RANGE[0] || hz > FREQ_RANGE[1])) return false;
+		if (checkRange && buf.some(hz => hz < FREQ_RANGE[0] || hz > FREQ_RANGE[1])) return false;
 		const lo = Math.min(...buf), hi = Math.max(...buf);
 		if (Math.log2(hi / lo) * 1200 > FREQ_STABLE_CENTS) return false;
 	}
@@ -1047,7 +1152,16 @@ function checkFreqAdvance()
 	if (freqBufStable())
 	{
 		if (freqStableSince === null) freqStableSince = Date.now();
-		if (Date.now() - freqStableSince >= FREQ_STABLE_HOLD_MS)
+		if (Date.now() - freqStableSince >= FREQ_STABLE_HOLD_MS && calState === CAL.WAIT_UNPLUG)
+		{
+			stopWobble();
+			baseHz[1]       = avg(freqBuf[1]);
+			calState        = CAL.WAIT_RECABLE;
+			cvTestPhase     = 0;
+			cvTestWarning   = '';
+			freqStableSince = null;
+		}
+		else if (Date.now() - freqStableSince >= FREQ_STABLE_HOLD_MS)
 		{
 			stopWobble();
 			baseHz[0] = avg(freqBuf[0]);
@@ -1097,25 +1211,15 @@ function updateDisplay1(hz)
 		// Trusted mode: CV Out 2 sweep is also measured via Audio In 1
 		calSweepTick(hz);
 	}
-
-	const freqEl = document.getElementById('freqDisplay');
-	const noteEl = document.getElementById('noteDisplay');
-	if (freqEl) freqEl.textContent = hz.toFixed(2) + ' Hz';
-	if (noteEl) noteEl.textContent = hzToNote(hz);
 }
 
 function updateDisplay2(hz)
 {
 	latestHz2 = hz;
 
-	const noteEl2 = document.getElementById('noteDisplay2');
-	const freqEl2 = document.getElementById('freqDisplay2');
-	if (noteEl2) noteEl2.textContent = hzToNote(hz);
-	if (freqEl2) freqEl2.textContent = hz.toFixed(2) + ' Hz';
-
 	if (calMode === 'trusted') return;  // trusted mode uses Audio In 1 only
 
-	if (calState === CAL.WAIT_FREQ)
+	if (calState === CAL.WAIT_FREQ || calState === CAL.WAIT_UNPLUG)
 	{
 		freqBuf[1].push(hz);
 		if (freqBuf[1].length > FREQ_WIN) freqBuf[1].shift();
@@ -1129,9 +1233,8 @@ function updateDisplay2(hz)
 	}
 	else if (calState === CAL.WAIT_CV2)
 	{
-		// Osctracking phase: CV Out 1 (ch 0) tested on bottom osc; workshop phase: CV Out 2 (ch 1)
-		const useChannel0 = calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0);
-		cvTestTick(hz, useChannel0 ? 0 : 1);
+		// Combined tracking phase: CV Out 1 (ch 0) tested on bottom osc; trimmer: CV Out 2 (ch 1)
+		cvTestTick(hz, oscTrackingPhase() ? 0 : 1);
 	}
 	else if (calState === CAL.TUNING && calChannel === 1)
 	{
@@ -1199,38 +1302,14 @@ function cvTestTick(hz, channel)
 		if (ratio >= 1.5 && ratio <= 3.0)
 		{
 			if (calMode === 'combined' && calState === CAL.WAIT_RECABLE)
-		{
-			// CV Out 2 confirmed on bottom oscillator - begin calibration phase
-			startPhase2();
-		}
-		else if (channel === 0 && (calMode === 'workshop' || (calMode === 'combined' && combinedPhase === 1)))
 			{
-				// Workshop / combined phase 1: wait to confirm second cable before sweeping
-				calState      = CAL.WAIT_CV2;
-				cvTestPhase   = 0;
-				cvTestWarning = '';
+				// CV Out 2 confirmed on bottom oscillator - begin calibration phase
+				startPhase2();
 			}
-			else if ((calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0)) && calState === CAL.WAIT_CV2)
+			else if (oscTrackingPhase() && calState === CAL.WAIT_CV2)
 			{
-				if (calMode === 'combined')
-				{
-					// Combined mode: skip bottom-osc sweep, go straight to live tracking
-					startLiveTrack();
-				}
-				else
-				{
-					// Osctracking phase: CV Out 1 confirmed on bottom osc -> sweep ch1 audio
-					calState   = CAL.TUNING;
-					calChannel = 1;
-					startCalSweep();
-				}
-			}
-			else if (channel === 1 && (calMode === 'workshop' || (calMode === 'combined' && combinedPhase === 1)))
-			{
-				// Workshop / combined phase 1: both cables confirmed - start ch0 sweep
-				calState   = CAL.TUNING;
-				calChannel = 0;
-				startCalSweep();
+				// CV Out 1 confirmed on bottom oscillator - skip bottom-osc sweep, go straight to live tracking
+				startLiveTrack();
 			}
 			else if (channel === 0 && calMode === 'trimmer')
 			{
@@ -1246,7 +1325,7 @@ function cvTestTick(hz, channel)
 			}
 			else
 			{
-				// Trusted ch0 or ch1: start sweep immediately on the channel just tested
+				// Trusted ch0 or ch1, or combined tracking phase ch0: start sweep on the channel just tested
 				calState   = CAL.TUNING;
 				calChannel = channel;
 				startCalSweep();
@@ -1270,14 +1349,14 @@ function startCalSweep()
 	if (calMode === 'combined' && combinedPhase === 1 && calChannel === 0)
 		calData = [[], []];
 
-	const isOscPhase = calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0);
+	const isOscPhase = oscTrackingPhase();
 	const steps = isOscPhase ? TRACK_STEPS  : CAL_STEPS;
 	const minCV = isOscPhase ? TRACK_MIN_CV : CAL_MIN_CV;
 	const maxCV = isOscPhase ? TRACK_MAX_CV : CAL_MAX_CV;
 	calCVValues = [];
 	for (let i = 0; i < steps; i++)
 		calCVValues.push(Math.round(minCV + i * (maxCV - minCV) / (steps - 1)));
-	// Randomise order for the osctracking phase so settling errors don't accumulate
+	// Randomise order for the tracking phase so settling errors don't accumulate
 	if (isOscPhase)
 		for (let i = calCVValues.length - 1; i > 0; i--)
 		{
@@ -1287,17 +1366,15 @@ function startCalSweep()
 	calStepIndex  = 0;
 	calStepCount  = 0;
 	calStepBuffer = [];
-	// Osctracking phase: both sweeps use CV Out 1 (channel 0), not CV Out 2
-	const cvCh = (isOscPhase && calChannel === 1) ? 0 : calChannel;
-	sendCV(1 - cvCh, CAL_MIN_CV);  // hold the other CV out at minimum
-	sendCV(cvCh, calCVValues[0]);
+	sendCV(1 - calChannel, CAL_MIN_CV);  // hold the other CV out at minimum
+	sendCV(calChannel, calCVValues[0]);
 	updateCalUI();
 }
 
 function calSweepTick(hz)
 {
 	calStepCount++;
-	const discard = (calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0)) ? TRACK_DISCARD : CAL_DISCARD;
+	const discard = oscTrackingPhase() ? TRACK_DISCARD : CAL_DISCARD;
 	if (calStepCount <= discard) return;
 
 	calStepBuffer.push(hz);
@@ -1327,7 +1404,7 @@ function advanceSweepStep()
 	{
 		if (calChannel === 0)
 		{
-			if (calMode === 'trusted' || calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0))
+			if (calMode === 'trusted' || oscTrackingPhase())
 			{
 				// Pause for user to reconnect CV cable to the second oscillator
 				calState      = CAL.WAIT_CV2;
@@ -1337,7 +1414,7 @@ function advanceSweepStep()
 			}
 			else
 			{
-				// Workshop / combined phase 1: second cable already connected, sweep immediately
+				// Combined phase 1: second cable already connected, sweep immediately
 				calChannel = 1;
 				startCalSweep();
 				return;
@@ -1345,11 +1422,6 @@ function advanceSweepStep()
 		}
 		else
 		{
-			if (calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0))
-			{
-				startLiveTrack();
-				return;
-			}
 			calState = CAL.DONE;
 		}
 		updateCalUI();
@@ -1357,8 +1429,7 @@ function advanceSweepStep()
 		return;
 	}
 
-	const cvCh = ((calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0)) && calChannel === 1) ? 0 : calChannel;
-	sendCV(cvCh, calCVValues[calStepIndex]);
+	sendCV(calChannel, calCVValues[calStepIndex]);
 	calStepCount  = 0;
 	calStepBuffer = [];
 	updateCalUI();
@@ -1381,7 +1452,7 @@ function inputDetectTick(adc)
 {
 	if (detectPhase === 0)
 	{
-		sendInputMV(DETECT_LOW_MV);
+		sendMV(0, DETECT_LOW_MV);
 		detectSettle = 0;
 		detectBuf    = [];
 		detectPhase  = 1;
@@ -1393,7 +1464,7 @@ function inputDetectTick(adc)
 		detectBuf.push(adc);
 		if (detectBuf.length < DETECT_COLLECT) return;
 		detectLowADC = avg(detectBuf);
-		sendInputMV(DETECT_HIGH_MV);
+		sendMV(0, DETECT_HIGH_MV);
 		detectSettle = 0;
 		detectBuf    = [];
 		detectPhase  = 2;
@@ -1421,7 +1492,7 @@ function startInputSweep()
 	inputSweepSettle  = 0;
 	inputSweepBuf     = [];
 	inputLastGoodRaw  = null;
-	sendInputMV(inputSweepCVVals[0]);
+	sendMV(0, inputSweepCVVals[0]);
 	updateCalUI();
 }
 
@@ -1449,7 +1520,6 @@ function inputSweepTick(readings)
 	if (inputSweepBuf.length >= CAL_IN_COLLECT)
 	{
 		inputCalData[calInputIndex].push({ mv: inputSweepCVVals[inputSweepStepIdx], adc: avg(inputSweepBuf) });
-		// drawInputResiduals();  // skip realtime redraw; graph shown on completion
 		advanceInputSweep();
 	}
 }
@@ -1460,7 +1530,7 @@ function advanceInputSweep()
 	if (inputSweepStepIdx >= inputSweepCVVals.length)
 	{
 		// This input is done
-		sendInputMV(0);
+		sendMV(0, 0);
 		if (calInputIndex < IN_NAMES.length - 1)
 		{
 			calInputIndex++;
@@ -1478,7 +1548,7 @@ function advanceInputSweep()
 		return;
 	}
 
-	sendInputMV(inputSweepCVVals[inputSweepStepIdx]);
+	sendMV(0, inputSweepCVVals[inputSweepStepIdx]);
 	inputSweepSettle = 0;
 	inputSweepBuf    = [];
 	inputLastGoodRaw = null;
@@ -1603,10 +1673,15 @@ function updateCalUI()
 
 	const steps = CAL_STEP_INFO[calMode];
 
+	// A completed CV out sweep that fails the sanity check must not be offered for saving
+	const cvCalDone = calState === CAL.DONE &&
+		(calMode === 'trusted' || (calMode === 'combined' && combinedPhase === 1));
+	const cvCalFailure = cvCalDone ? cvCalProblem() : null;
+
 	// Instruction text (text field may be a string or a function)
 	if (calState === CAL.IDLE)
 	{
-		instrEl.innerHTML = 'Press <b>Start Calibration</b> to begin.';
+		instrEl.innerHTML = `Press <b>${startLabel(calMode)}</b> to begin.`;
 	}
 	else
 	{
@@ -1614,6 +1689,8 @@ function updateCalUI()
 		let text = info ? (typeof info.text === 'function' ? info.text() : info.text) : '';
 		if ((calState === CAL.WAIT_CV1 || calState === CAL.WAIT_CV2) && cvTestWarning)
 			text += ` <span style="color:#c04000">${cvTestWarning}</span>`;
+		if (cvCalFailure)
+			text = `<span style="color:#c04000">Calibration failed. ${cvCalFailure}</span><br><br>Press <b>Cancel</b> and try again.`;
 		instrEl.innerHTML = text;
 	}
 
@@ -1653,10 +1730,10 @@ function updateCalUI()
 		}
 		else
 		{
-			if (calState === CAL.WAIT_FREQ)
+			if (calState === CAL.WAIT_FREQ || calState === CAL.WAIT_UNPLUG)
 			{
-				// Trusted mode shows only Audio In 1; workshop shows both
-				const channels = calMode === 'trusted' ? [0] : [0, 1];
+				const channels  = freqWaitChannels();
+				const anyRange  = calState === CAL.WAIT_UNPLUG;  // see freqBufStable()
 				const hzValues = [latestHz1, latestHz2];
 				const rows = channels.map(ch => {
 					const hz    = hzValues[ch];
@@ -1665,7 +1742,7 @@ function updateCalUI()
 						return `<div style="margin-bottom:5px">` +
 							`<span><b style="color:${chCol}">In ${ch+1}</b> <span style="color:#aaa">no signal</span></span>` +
 							makeFreqSlider(0, false, false) + `</div>`;
-					const inRange = hz >= FREQ_RANGE[0] && hz <= FREQ_RANGE[1];
+					const inRange = anyRange || (hz >= FREQ_RANGE[0] && hz <= FREQ_RANGE[1]);
 					const buf     = freqBuf[ch];
 					const stable  = buf.length >= FREQ_WIN && (() => {
 						const lo = Math.min(...buf), hi = Math.max(...buf);
@@ -1685,10 +1762,9 @@ function updateCalUI()
 			}
 			else if (calState === CAL.TUNING)
 			{
-				const isOscPhase = calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0);
-			const label = isOscPhase
-				? (calChannel === 0 ? 'Top oscillator' : 'Bottom oscillator')
-				: (calChannel === 0 ? 'CV Out 1' : 'CV Out 2');
+				const label = oscTrackingPhase()
+					? 'Top oscillator'
+					: (calChannel === 0 ? 'CV Out 1' : 'CV Out 2');
 				const done  = calData[calChannel].length;
 				const total = calCVValues.length || CAL_STEPS;
 				const pct   = Math.round(done / total * 100);
@@ -1720,10 +1796,7 @@ function updateCalUI()
 			}
 			else if (calState === CAL.DONE)
 			{
-				if (calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0))
-					progEl.textContent = `Top osc: ${calData[0].length} pts  ·  Bottom osc: ${calData[1].length} pts`;
-				else
-					progEl.textContent = `CV1: ${calData[0].length} pts  ·  CV2: ${calData[1].length} pts`;
+				progEl.textContent = `CV1: ${calData[0].length} pts  ·  CV2: ${calData[1].length} pts`;
 			}
 			else
 			{
@@ -1733,18 +1806,6 @@ function updateCalUI()
 	}
 
 	// Show/hide elements specific to each mode
-	const eepromPanel = document.getElementById(`eepromPanel${pfx}`);
-	if (eepromPanel)
-	{
-		const showEeprom = calState === CAL.DONE &&
-			calMode !== 'osctracking' &&
-			calMode !== 'inputs' &&
-			calMode !== 'trusted' &&
-			!(calMode === 'combined' && combinedPhase === 0) &&
-			!(standaloneMode && calMode === 'combined');
-		eepromPanel.style.display = showEeprom ? 'flex' : 'none';
-	}
-
 	const backBtn = document.getElementById('backBtn-inputs');
 	if (backBtn && calMode === 'inputs')
 		backBtn.textContent = calState === CAL.DONE ? '← Back' : '← Cancel';
@@ -1753,19 +1814,13 @@ function updateCalUI()
 	if (standalonePanel)
 	{
 		const showStandalone =
-			(standaloneMode && calState === CAL.DONE && calMode === 'combined' && combinedPhase === 1) ||
-			(calMode === 'trusted' && calState === CAL.DONE);
+			((calState === CAL.DONE && calMode === 'combined' && combinedPhase === 1) ||
+			(calMode === 'trusted' && calState === CAL.DONE)) &&
+			!cvCalFailure;
 		standalonePanel.style.display = showStandalone ? 'flex' : 'none';
 	}
 
-	const remeasurePanel = document.getElementById(`remeasurePanel${pfx}`);
-	if (remeasurePanel)
-		remeasurePanel.style.display = (
-			calMode === 'osctracking'
-			&& (calState === CAL.DONE || calState === CAL.LIVE_TRACK)
-		) ? 'flex' : 'none';
-
-const graphCanvas = document.getElementById(`graphAtRes${pfx}`);
+	const graphCanvas = document.getElementById(`graphAtRes${pfx}`);
 	if (graphCanvas)
 	{
 		const showGraph = calMode === 'inputs'
@@ -1836,75 +1891,16 @@ function drawAtResiduals(canvasId)
 	const allL2 = allData.map(d => Math.log2(d.hz));
 	const xLo   = Math.min(...allL2), xHi = Math.max(...allL2);
 
-	// For osctracking ch1: plot residuals against the TOP osc regression line so the
-	// graph directly shows the deviation between the two oscillators' tracking.
-	let reg0 = null;
-	if ((calMode === 'osctracking' || (calMode === 'combined' && combinedPhase === 0)) && calData[0].length >= 2)
-		reg0 = linReg(calData[0].map(d => d.cv), calData[0].map(d => Math.log2(d.hz)));
-
-	let livePoints = null;  // computed after chRes (needs sweep residuals for drift correction)
-
 	let allRes = [];
-	const chRes = calData.map((data, ch) => {
+	const chRes = calData.map(data => {
 		if (data.length < 2) return [];
-		const cvs = data.map(d => d.cv);
-		const l2  = data.map(d => Math.log2(d.hz));
-		let slope, intercept;
-		if (calMode === 'osctracking' && ch === 1 && reg0)
-		{
-			// Use osc 1's slope but osc 2's own intercept: removes tuning offset,
-			// leaving only the tracking (slope) difference visible as a tilt.
-			const reg1 = linReg(cvs, l2);
-			slope     = reg0.slope;
-			intercept = reg1.intercept;
-		}
-		else
-		{
-			({ slope, intercept } = linReg(cvs, l2));
-		}
-		const res = data.map((d, i) => (Math.log2(d.hz) - (slope * d.cv + intercept)) * 1200);
+		const { slope, intercept } = linReg(data.map(d => d.cv), data.map(d => Math.log2(d.hz)));
+		const res = data.map(d => (Math.log2(d.hz) - (slope * d.cv + intercept)) * 1200);
 		allRes = allRes.concat(res);
 		return res;
 	});
 
 	if (allRes.length === 0) return;
-
-	// Drift-corrected live-track overlay.
-	// Compute raw residuals with the same baseline as the sweep, then subtract the
-	// mean difference vs the interpolated sweep curve so that pitch drift (temperature,
-	// warm-up) cancels out.  What remains shows only genuine slope deviation.
-	if (calState === CAL.LIVE_TRACK && reg0 && liveTrackLastMeas.length === LIVE_TRACK_CVS.length && chRes[1].length >= 2)
-	{
-		// Sort by cv (sweep may be in random order)
-		const sweepPairs = calData[1].map((d, i) => [d.cv, chRes[1][i]]).sort((a, b) => a[0] - b[0]);
-		const sweepCvs = sweepPairs.map(p => p[0]);
-		const sweepRes = sweepPairs.map(p => p[1]);
-		const reg1 = linReg(sweepCvs, calData[1].map(d => Math.log2(d.hz)));
-
-		const rawRes = liveTrackLastMeas.map(d =>
-			(Math.log2(d.hz) - (reg0.slope * d.cv + reg1.intercept)) * 1200
-		);
-
-		// Linearly interpolate sweep residuals at each live CV value
-		const interpRes = liveTrackLastMeas.map(d => {
-			const cv = d.cv;
-			let i = sweepCvs.findIndex(c => c >= cv);
-			if (i < 0)  return sweepRes[sweepRes.length - 1];
-			if (i === 0) return sweepRes[0];
-			const t = (cv - sweepCvs[i - 1]) / (sweepCvs[i] - sweepCvs[i - 1]);
-			return sweepRes[i - 1] + t * (sweepRes[i] - sweepRes[i - 1]);
-		});
-
-		// Drift offset = mean deviation of live residuals from the sweep curve
-		const drift = rawRes.reduce((s, r, j) => s + r - interpRes[j], 0) / rawRes.length;
-
-		livePoints = liveTrackLastMeas.map((d, j) => ({
-			l2:  Math.log2(d.hz),
-			res: rawRes[j] - drift,
-		}));
-	}
-
-	if (livePoints) livePoints.forEach(p => allRes.push(p.res));
 
 	let rLo = Math.min(...allRes), rHi = Math.max(...allRes);
 	const rSpan = Math.max(rHi - rLo, 2);
@@ -1966,137 +1962,68 @@ function drawAtResiduals(canvasId)
 		});
 	}
 
-	// Live-track overlay: draw the 3 fresh bottom-osc points as open circles
-	if (livePoints)
-	{
-		ctx.strokeStyle = CH_COLOR[1];
-		ctx.lineWidth   = 2;
-		livePoints.forEach(p => {
-			ctx.beginPath();
-			ctx.arc(toX(p.l2), toY(p.res), 5.5, 0, 2 * Math.PI);
-			ctx.stroke();
-		});
-	}
-
 	ctx.fillStyle = '#444'; ctx.font = '10px monospace';
 	ctx.fillText('Residual error (cents)', pad.l + 2, pad.t + 9);
 }
 
 ////////////////////////////////////////////////////////////
-// Input calibration residual graph
+// Input calibration EEPROM save
 
-function drawInputResiduals()
+// Plausible range for input calibration results. Values outside this are much more likely to
+// come from a wrong or loose connection during the sweep than from component tolerances.
+const IN_MV_PER_ADC_NOMINAL   = 192000 / 65536;  // ~2.93 mV per ADC count (firmware default, -6 to +6V)
+const IN_MV_PER_ADC_TOLERANCE = 0.5;             // +/-50%
+const IN_MAX_ADC_OFFSET       = 300;             // ADC counts at 0V (~0.9V)
+
+// Returns a description of the problem if the input calibration fits should not be saved, else null.
+function inputCalProblem(fits)
 {
-	const canvas = document.getElementById('graphAtRes-inputs');
-	if (!canvas) return;
-	const ctx = setupCanvas(canvas);
-	ctx.fillStyle = '#fff';
-	ctx.fillRect(0, 0, AT_W, AT_RES_H);
-
-	// Compute per-channel residuals; collect all for a common y-scale
-	let allRes = [];
-	const chRes = inputCalData.map(data => {
-		if (data.length < 2) return [];
-		const xs = data.map(d => d.mv);
-		const ys = data.map(d => d.adc);
-		const { slope, intercept } = linReg(xs, ys);
-		const res = ys.map((y, i) => y - (slope * xs[i] + intercept));
-		allRes = allRes.concat(res);
-		return res;
-	});
-
-	if (allRes.length === 0) return;
-
-	// X axis: millivolts converted to volts
-	const xLo = CAL_IN_MIN_MV / 1000;
-	const xHi = CAL_IN_MAX_MV / 1000;
-
-	// Y axis: auto-scale to data, minimum span of ±2 ADC counts
-	let rLo = Math.min(...allRes), rHi = Math.max(...allRes);
-	const rSpan = Math.max(rHi - rLo, 4);
-	const rMid  = (rLo + rHi) / 2;
-	rLo = rMid - rSpan / 2 - 0.5;
-	rHi = rMid + rSpan / 2 + 0.5;
-
-	const pad = { l: 32, r: 90, t: 6, b: 18 };
-	const toX = v  => pad.l + (v - xLo) / (xHi - xLo) * (AT_W - pad.l - pad.r);
-	const toY = r  => AT_RES_H - pad.b - (r - rLo) / (rHi - rLo) * (AT_RES_H - pad.t - pad.b);
-
-	// Y grid - choose a sensible tick step
-	const rRange   = rHi - rLo;
-	const tickStep = rRange <= 10 ? 1 : rRange <= 50 ? 5 : rRange <= 100 ? 10 : 20;
-	ctx.font = '10px monospace';
-	for (let c = Math.ceil(rLo / tickStep) * tickStep; c <= rHi; c += tickStep)
-	{
-		const y = toY(c);
-		ctx.strokeStyle = c === 0 ? '#bbb' : '#eee';
-		ctx.lineWidth   = c === 0 ? 1.5 : 1;
-		ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(AT_W - pad.r, y); ctx.stroke();
-		ctx.fillStyle = '#444';
-		ctx.fillText(`${c >= 0 ? '+' : ''}${c}`, 2, y + 3);
-	}
-
-	// X grid - voltage reference lines at whole volts
-	ctx.fillStyle = '#444'; ctx.font = '10px monospace';
-	for (let v = Math.ceil(xLo); v <= Math.floor(xHi); v++)
-	{
-		const x = toX(v);
-		ctx.strokeStyle = v === 0 ? '#ccc' : '#eee';
-		ctx.lineWidth   = v === 0 ? 1.5 : 1;
-		ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, AT_RES_H - pad.b); ctx.stroke();
-		ctx.fillText(`${v}V`, x - 6, AT_RES_H - 4);
-	}
-
-	// Per-channel lines + dots
 	for (let ch = 0; ch < 4; ch++)
 	{
-		const data = inputCalData[ch];
-		const res  = chRes[ch];
-		if (data.length < 2) continue;
-
-		ctx.strokeStyle = IN_COLOR[ch]; ctx.lineWidth = 1.5;
-		ctx.beginPath();
-		data.forEach((d, i) => {
-			const x = toX(d.mv / 1000), y = toY(res[i]);
-			if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-		});
-		ctx.stroke();
+		const { mvPerAdc, adcOffset } = fits[ch];
+		const ratio = mvPerAdc / IN_MV_PER_ADC_NOMINAL;
+		if (!(Math.abs(ratio - 1) <= IN_MV_PER_ADC_TOLERANCE))
+			return `${IN_NAMES[ch]} scaling is ${mvPerAdc.toFixed(3)} mV per step (expected about ${IN_MV_PER_ADC_NOMINAL.toFixed(2)}). ` +
+				`Check that CV Out 1 was connected to ${IN_NAMES[ch]} during its sweep. Calibration not saved.`;
+		if (!(Math.abs(adcOffset) <= IN_MAX_ADC_OFFSET))
+			return `${IN_NAMES[ch]} offset is ${adcOffset} steps at 0V (expected less than ${IN_MAX_ADC_OFFSET}). Calibration not saved.`;
 	}
-
-	// Legend (right side, inside the right pad area)
-	const lx = AT_W - pad.r + 6;
-	IN_NAMES.forEach((name, ch) => {
-		if (inputCalData[ch].length === 0) return;
-		const ly = pad.t + 8 + ch * 18;
-		ctx.fillStyle = IN_COLOR[ch];
-		ctx.fillRect(lx, ly, 10, 10);
-		ctx.fillStyle = '#444'; ctx.font = '9px monospace';
-		ctx.fillText(name, lx + 13, ly + 9);
-	});
-
-	// Axis labels
-	ctx.fillStyle = '#444'; ctx.font = '10px monospace';
-	ctx.fillText('Residual (ADC counts)', pad.l + 2, pad.t + 9);
+	return null;
 }
-
-////////////////////////////////////////////////////////////
-// Input calibration EEPROM save
 
 function saveInputCalToEEPROM()
 {
-	const statusEl = document.getElementById('eepromStatus-inputs');
-
 	for (let ch = 0; ch < 4; ch++)
 	{
 		if (inputCalData[ch].length < 2)
 		{
-			if (statusEl) statusEl.textContent = `Need calibration data for ${IN_NAMES[ch]}.`;
+			setCalStatus('inputs', `Need calibration data for ${IN_NAMES[ch]}.`);
 			return;
 		}
 	}
 
+	// Correction for CV out output impedance vs. Audio/CV In input impedance.
+	// The calibrated mV values represent voltage at the oscillator jack (used for CV cal),
+	// but the Audio/CV In jacks see a different voltage due to their different load.
+	const corrFactor = ainCalCorrectionFactor(getCalOscImpedance());
+
+	const fits = inputCalData.map(data => {
+		const xs = data.map(d => d.mv);   // millivolts (calibrated, i.e. voltage at oscillator jack)
+		const ys = data.map(d => d.adc);
+		const { slope, intercept } = linReg(xs, ys);
+		// slope is ADC counts per calibrated-mV; corrFactor converts to ADC counts per actual-jack-mV
+		return { adcOffset: Math.round(intercept), mvPerAdc: corrFactor / slope };
+	});
+
+	const problem = inputCalProblem(fits);
+	if (problem)
+	{
+		setCalStatus('inputs', problem);
+		return;
+	}
+
 	// 38-byte buffer: 2-byte magic, 1-byte version, 1-byte padding,
-	// 4 channels × 8 bytes (adcOffset int32 BE + mvPerAdcQ16 int32 BE), 2-byte CRC
+	// 4 channels x 8 bytes (adcOffset int32 BE + mvPerAdcQ16 int32 BE), 2-byte CRC
 	const buf = new Uint8Array(38);
 	buf[0] = (2002 >> 8) & 0xFF;
 	buf[1] =  2002       & 0xFF;
@@ -2105,13 +2032,8 @@ function saveInputCalToEEPROM()
 
 	for (let ch = 0; ch < 4; ch++)
 	{
-		const data = inputCalData[ch];
-		const xs = data.map(d => d.mv);   // millivolts (calibrated)
-		const ys = data.map(d => d.adc);
-		const { slope, intercept } = linReg(xs, ys);
-		// slope is ADC counts per mV; 1/slope is mV per ADC count
-		const adcOffset   = Math.round(intercept);
-		const mvPerAdcQ16 = Math.round(65536 / slope);
+		const adcOffset   = fits[ch].adcOffset;
+		const mvPerAdcQ16 = Math.round(65536 * fits[ch].mvPerAdc);
 
 		const off = 4 + ch * 8;
 		buf[off]   = (adcOffset   >>> 24) & 0xFF;
@@ -2132,11 +2054,8 @@ function saveInputCalToEEPROM()
 	const payload = 'I|' + hex + '|';
 	SendSysEx(payload.split('').map(c => c.charCodeAt(0)));
 
-	if (statusEl) statusEl.textContent = 'Saving…';
+	beginSave('inputs', 'Saved \u2714 Restart device to apply new calibration.');
 }
-
-////////////////////////////////////////////////////////////
-// EEPROM calibration save (pitch modes only)
 
 // CRC-CCITT (poly 0x1021, init 0xFFFF) - matches firmware CRCencode()
 function crcCCITT(buf)
@@ -2152,6 +2071,26 @@ function crcCCITT(buf)
 		}
 	}
 	return crc;
+}
+
+// Sanity limits for a completed CV out sweep. alpha is octaves per nominal volt (CV_TEST_HIGH),
+// which should be close to 1 for an uncalibrated Computer driving a 1V/oct oscillator.
+// Catches e.g. a CV out not connected (alpha near 0) or connected to an FM input.
+const CAL_ALPHA_RANGE = [0.7, 1.3];
+
+// Returns a description of the problem if the CV out sweep data should not be saved, else null.
+function cvCalProblem()
+{
+	for (let ch = 0; ch < 2; ch++)
+	{
+		const data  = calData[ch];
+		const name  = `CV Out ${ch + 1}`;
+		const alpha = linReg(data.map(d => d.cv), data.map(d => Math.log2(d.hz))).slope * CV_TEST_HIGH;
+		if (!(alpha >= CAL_ALPHA_RANGE[0] && alpha <= CAL_ALPHA_RANGE[1]))
+			return `${name} changed the oscillator pitch by ${alpha.toFixed(2)} octaves per volt (expected close to 1). ` +
+				`Check that ${name} is connected to the oscillator pitch input.`;
+	}
+	return null;
 }
 
 // Derive 5 (voltage_tenths, dacSetting) calibration points from a channel's regression.
@@ -2183,17 +2122,24 @@ function buildChannelCalPoints(slope, intercept, f0)
 	return points;
 }
 
-function saveCalToEEPROM()
+// statusMode / okText: where and what to report once the firmware confirms the save
+function saveCalToEEPROM(statusMode, okText)
 {
-	const statusEl = document.getElementById(`eepromStatus-${calMode}`);
-
 	if (calData[0].length < 2 || calData[1].length < 2)
 	{
-		if (statusEl) statusEl.textContent = 'Need calibration data for both channels.';
-		return;
+		setCalStatus(calMode, 'Need calibration data for both channels.');
+		return false;
+	}
+
+	const problem = cvCalProblem();
+	if (problem)
+	{
+		setCalStatus(calMode, problem);
+		return false;
 	}
 
 	const buf = new Uint8Array(88);
+	const newCvCal = [null, null];
 
 	// Header: magic number 2001 (big-endian), version 0
 	buf[0] = (2001 >> 8) & 0xFF;
@@ -2208,6 +2154,7 @@ function saveCalToEEPROM()
 		const l2hz  = data.map(d => Math.log2(d.hz));
 		const { slope, intercept } = linReg(cvs, l2hz);
 		const points = buildChannelCalPoints(slope, intercept, baseHz[ch]);
+		newCvCal[ch] = { slope, intercept, f0: baseHz[ch] };
 
 		let off = 4 + 41 * ch;  // channel 0 -> byte 4, channel 1 -> byte 45
 		buf[off++] = points.length;
@@ -2231,5 +2178,6 @@ function saveCalToEEPROM()
 	const payload = 'E|' + hex + '|';
 	SendSysEx(payload.split('').map(c => c.charCodeAt(0)));
 
-	if (statusEl) statusEl.textContent = 'Saving\u2026';
+	beginSave(statusMode, okText, newCvCal);
+	return true;
 }

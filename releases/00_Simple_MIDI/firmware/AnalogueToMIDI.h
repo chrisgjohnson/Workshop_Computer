@@ -62,6 +62,12 @@ public:
 			return -1;
 		}
 	}
+	// Call if the value returned by GetMIDIValueIfNew could not be sent,
+	// so that it is returned again next time.
+	void MarkUnsent()
+	{
+		previousMIDIValue = -1;
+	}
 private:
 	int32_t minval, maxval;
 	volatile int8_t currentMIDIValue;
