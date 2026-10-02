@@ -1,0 +1,146 @@
+draft: false
+Name: Simple MIDI
+short-description: USB MIDI interface and Computer calibrator.
+Language: C++ (Pico SDK)
+Creator: Tom Whitwell, Chris Johnson
+Version: "0.7.0"
+Status: Released
+date-created: 2024-11-30
+date-updated: 2026-10-02
+license: MIT
+contact:
+  email: tom@musicthing.co.uk
+  website: https://www.musicthing.co.uk/
+  social:
+    github: https://github.com/TomWhitwell
+
+tags:
+  - midi
+  - midi-host
+  - utility
+  - cv
+  - gate
+  - calibration
+
+summary: |
+  Simple MIDI turns the Computer into a two-channel USB MIDI interface over the front USB-C connection. Incoming MIDI notes, pitch bend and CC 42 become calibrated pitch CV, gates and CV; the knobs, switch and inputs are sent back as MIDI CCs. It works as a MIDI device (connected to a computer) or as a MIDI host (connected to a MIDI controller).
+
+  It is also used, with a web page, to calibrate the Computer's precision CV outputs and its audio and CV inputs. The calibration is saved on the Computer and used by other cards.
+
+uf2:
+  - path: uf2/simple_midi_2.uf2
+    name: Simple MIDI 0.7.0
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: CC 38
+      description: Sent to the host as MIDI CC 38 on channel 1
+      type: cv
+
+    - id: AudioIn2
+      name: CC 39
+      description: Sent to the host as MIDI CC 39 on channel 1
+      type: cv
+
+    - id: CVIn1
+      name: CC 40
+      description: Sent to the host as MIDI CC 40 on channel 1
+      type: cv
+
+    - id: CVIn2
+      name: CC 41
+      description: Sent to the host as MIDI CC 41 on channel 1
+      type: cv
+
+  outputs:
+    - id: AudioOut1
+      name: CH 1 CC 42
+      description: MIDI channel 1 CC 42 output as CV, approximately -5V to +5V
+      type: cv
+
+    - id: AudioOut2
+      name: CH 2 CC 42
+      description: MIDI channel 2 CC 42 output as CV, approximately -5V to +5V
+      type: cv
+
+    - id: CVOut1
+      name: CH 1 Pitch
+      description: Calibrated 1V/octave pitch CV for the last held note on MIDI channel 1, with +/-2 semitone pitch bend
+      type: cv
+
+    - id: CVOut2
+      name: CH 2 Pitch
+      description: Calibrated 1V/octave pitch CV for the last held note on MIDI channel 2, with +/-2 semitone pitch bend
+      type: cv
+
+    - id: PulseOut1
+      name: CH 1 Gate
+      description: High while any note is held on MIDI channel 1
+      type: pulse
+
+    - id: PulseOut2
+      name: CH 2 Gate
+      description: High while any note is held on MIDI channel 2
+      type: pulse
+
+controls:
+  switch:
+    up:
+      name: CC 37
+      description: Sends MIDI CC 37 value 127
+    middle:
+      name: CC 37
+      description: Sends MIDI CC 37 value 64
+    down:
+      name: CC 37 / Calibrate
+      description: Sends MIDI CC 37 value 0. Hold down while pressing Reset/Load to start calibration mode, which is controlled from the calibration web page.
+
+  knobs:
+    - main:
+        name: CC 34
+        description: Sent to the host as MIDI CC 34 on channel 1
+      x:
+        name: CC 35
+        description: Sent to the host as MIDI CC 35 on channel 1
+      y:
+        name: CC 36
+        description: Sent to the host as MIDI CC 36 on channel 1
+
+  leds:
+    - display: list
+      items:
+        - id: LED0
+          name: CH 1 CC 42
+          description: Brightness shows the channel 1 CC 42 value
+
+        - id: LED1
+          name: CH 2 CC 42
+          description: Brightness shows the channel 2 CC 42 value
+
+        - id: LED2
+          name: CH 1 Pitch
+          description: Brightness shows the channel 1 note number
+
+        - id: LED3
+          name: CH 2 Pitch
+          description: Brightness shows the channel 2 note number
+
+        - id: LED4
+          name: CH 1 Gate
+          description: On while a note is held on channel 1
+
+        - id: LED5
+          name: CH 2 Gate
+          description: On while a note is held on channel 2
+
+host:
+  usb:
+    - name: USB MIDI device
+      role: midi
+      description: Connected to a computer, appears as "MTMComputer MIDI" for MIDI input and output with a DAW or browser tools
+    - name: USB MIDI host
+      role: midi-host
+      description: Connected to a USB MIDI controller, receives notes, pitch bend and CC 42 from it
+  notes: |
+    Device or host mode is detected automatically at power-up. Power-cycle the Workshop System, rather than only pressing Reset, when changing what is connected.
