@@ -1,7 +1,7 @@
 draft: false
 Name: Simple MIDI
 short-description: USB MIDI interface and Computer calibrator.
-Language: C++ (Pico SDK)
+Language: C++ (Pico SDK + ComputerCard)
 Creator: Tom Whitwell, Chris Johnson
 Version: "0.7.0"
 Status: Released
