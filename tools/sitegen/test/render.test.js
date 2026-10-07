@@ -243,17 +243,28 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
   const testCard = card({
     title: 'A "quoted" <card>', slug: 'safe-slug',
     short_description: 'x'.repeat(220),
-    metadata: { creator: 'A&B <maker>', created: '2025-01-01', updated: '2026-01-01' },
+    metadata: { creator: 'A&B <maker>', created: '2025-01-01', updated: '2026-01-01', published: '2025-02-01' },
   });
   const tile = renderTile(testCard, { showCreator: true });
   assert.match(tile, /data-creator="A&amp;B &lt;maker&gt;"/);
-  assert.match(tile, /data-date="2025-01-01"/);
+  assert.match(tile, /data-date="2025-02-01"/);
   assert.match(tile, /data-name="a &quot;quoted&quot; &lt;card&gt;"/);
   assert.match(tile, /…/);
   assert.match(renderArchive([testCard]), /\.\.\/programs\/safe-slug\//);
   const shelf = renderShelf({ title: 'Shelf <One>', cards: ['missing', testCard.id] }, new Map([[testCard.id, testCard]]));
   assert.match(shelf, /Shelf &lt;One&gt;/);
   assert.equal((shelf.match(/program-card-tile__link/g) || []).length, 1);
+});
+
+test('shelves can link to a sorted card list from their header', () => {
+  const testCard = card();
+  const cardsById = new Map([[testCard.id, testCard]]);
+  const linked = renderShelf({
+    title: 'New', cards: [testCard.id],
+    link: { text: 'Browse all new cards', href: '?sort=created-desc' },
+  }, cardsById);
+  assert.match(linked, /<a class="program-card-shelf__link" href="\.\/\?sort=created-desc">Browse all new cards<\/a>/);
+  assert.doesNotMatch(renderShelf({ title: 'Plain', cards: [testCard.id] }, cardsById), /program-card-shelf__link/);
 });
 
 test('flair-driven shelves sort by recency then apply the limit', () => {
@@ -347,12 +358,15 @@ test('video shelf layouts show media on the intended cards', () => {
   assert.doesNotMatch(leadWithoutVideo, /program-card-tile__media|program-card-tile--video/);
 });
 
-test('catalogue sorting uses inferred creation dates', () => {
-  const inferred = card({
-    metadata: { created: '2026-07-29', created_inferred: true },
+test('catalogue sorting uses the publish date, not the declared creation date', () => {
+  const published = card({
+    metadata: { created: '2026-09-01', published: '2026-09-30' },
   });
-  assert.match(renderTile(inferred), /data-date="2026-07-29"/);
-  assert.match(renderArchive([inferred]), /data-date="2026-07-29"/);
+  assert.match(renderTile(published), /data-date="2026-09-30"/);
+  assert.match(renderArchive([published]), /data-date="2026-09-30"/);
+  const draft = card({ metadata: { created: '2026-09-01' } });
+  assert.match(renderTile(draft), /data-date=""/);
+  assert.match(renderArchive([draft]), /data-date=""/);
 });
 
 test('featured blank card overlays its label artwork on the randomized card icon', () => {
